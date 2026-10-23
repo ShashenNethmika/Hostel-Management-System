@@ -1,4 +1,5 @@
-/* Original fees module: Chesmi. Adapted for shared student records and data paths.
+/* Original fees module: H.G.Chesmi Tharushika (TG IT 2025 2465).
+ * Adapted for shared student records and data paths.
  *
  * Payment file: payments.txt in the shared data directory
  * Payment format: Student_ID Total_Fee Paid_Amount

@@ -1,4 +1,5 @@
-/* Original room allocation module: Prabodhini. Adapted for shared student records. */
+/* Original room allocation module: R.M.P.Prabodhini Rathnayake (TG IT 2025 2509).
+ * Adapted for shared student records. */
 #include "rooms.h"
 #include "student.h"
 

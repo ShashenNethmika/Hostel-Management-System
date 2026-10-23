@@ -1,4 +1,5 @@
-/* Original attendance module: Tharushi. Adapted for integration and overdue leave.
+/* Original attendance module: S.G.A.T.V Subhawickrama (TG IT 2025 2518).
+ * Adapted for integration and overdue leave.
  * Last record per student is current. */
 #include "attendance.h"
 #include "common.h"

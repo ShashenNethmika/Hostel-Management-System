@@ -1,4 +1,5 @@
-/* Original reports module: Shashen. Adapted for shared data and interfaces. */
+/* Original reports module: A.A.Shashen Nethmika (TG IT 2025 2469).
+ * Adapted for shared data and interfaces. */
 #include "reports.h"
 #include "common.h"
 #include "student.h"

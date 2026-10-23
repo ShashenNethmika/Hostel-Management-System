@@ -6,13 +6,13 @@ Data is stored in text files and remains available after the program exits.
 
 ## Group contributions
 
-| Member | Original contribution | Files |
-| --- | --- | --- |
-| Shashen | Main menu and reports/statistics | `src/main.c`, `src/reports.c`, `src/reports.h` |
-| Ishara | Student registration and management | `src/student.c`, `src/student.h` |
-| Tharushi | Attendance and leave management | `src/attendance.c`, `src/attendance.h` |
-| Prabodhini | Room allocation and management | `src/rooms.c`, `src/rooms.h` |
-| Chesmi | Fees and payment tracking | `src/fee.c`, `src/fee.h` |
+| Member | Student ID | Original contribution | Files |
+| --- | --- | --- | --- |
+| A.A.Shashen Nethmika | TG IT 2025 2469 | Main menu and reports/statistics | `src/main.c`, `src/reports.c`, `src/reports.h` |
+| M.M.Ishara Madhushan | TG IT 2025 2514 | Student registration and management | `src/student.c`, `src/student.h` |
+| S.G.A.T.V Subhawickrama | TG IT 2025 2518 | Attendance and leave management | `src/attendance.c`, `src/attendance.h` |
+| R.M.P.Prabodhini Rathnayake | TG IT 2025 2509 | Room allocation and management | `src/rooms.c`, `src/rooms.h` |
+| H.G.Chesmi Tharushika | TG IT 2025 2465 | Fees and payment tracking | `src/fee.c`, `src/fee.h` |
 
 These credits identify the authors of the supplied group modules. The repository
 also includes subsequent integration changes, shared helpers, and tests.

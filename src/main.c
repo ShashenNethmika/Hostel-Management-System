@@ -1,4 +1,5 @@
-/* Original main menu: Shashen. Adapted for the integrated application. */
+/* Original main menu: A.A.Shashen Nethmika (TG IT 2025 2469).
+ * Adapted for the integrated application. */
 #include <stdio.h>
 #include <stdlib.h>
 

@@ -1,4 +1,5 @@
-/* Original student registration module: Ishara. Adapted for shared data and input. */
+/* Original student registration module: M.M.Ishara Madhushan (TG IT 2025 2514).
+ * Adapted for shared data and input. */
 #include "student.h"
 
 #include <errno.h>
