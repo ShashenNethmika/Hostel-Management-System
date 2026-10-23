@@ -18,6 +18,8 @@ struct Attendance {
 
 static int readAttendance(FILE *file, struct Attendance *record, size_t *lineNumber) {
     char line[RECORD_LINE_SIZE];
+    char today[11];
+    currentDate(today);
     while (readDataLine(file, "attendance.txt", line, sizeof(line), lineNumber)) {
         char *fields[5];
         int count = splitFields(line, fields, 5);
@@ -28,7 +30,8 @@ static int readAttendance(FILE *file, struct Attendance *record, size_t *lineNum
         /* Accept original ID Status samples, and the member's pipe history. */
         const char *status = count == 2 ? fields[1] : fields[2];
         if (!parseInteger(status, 0, 1, &record->status) ||
-            (count >= 4 && (!validStudentName(fields[1]) || !validDate(fields[3]))) ||
+            (count >= 4 && (!validStudentName(fields[1]) || !validDate(fields[3]) ||
+                            strcmp(fields[3], today) > 0)) ||
             (count == 5 && strcmp(fields[4], "-") != 0 &&
              (!validDate(fields[4]) || strcmp(fields[4], fields[3]) < 0))) {
             warnInvalidRecord("attendance.txt", *lineNumber);
@@ -68,12 +71,14 @@ static void markAttendance(void) {
             printf("Invalid return date. Use today or a later calendar date.\n");
         }
     }
-    FILE *file = fopen("attendance.txt", "a");
-    if (file == NULL) { printDataFileError("attendance.txt"); return; }
-    int saved = fprintf(file, "%s|%s|%d|%s|%s\n", record.id, record.name, record.status,
-                        record.date, record.expectedReturn) >= 0;
-    if (fclose(file) != 0) saved = 0;
-    if (!saved) { printDataFileError("attendance.txt"); return; }
+    char line[RECORD_LINE_SIZE];
+    int length = snprintf(line, sizeof(line), "%s|%s|%d|%s|%s\n", record.id,
+                          record.name, record.status, record.date, record.expectedReturn);
+    if (length < 0 || (size_t)length >= sizeof(line) ||
+        !appendDataRecord("attendance.txt", line)) {
+        printDataFileError("attendance.txt");
+        return;
+    }
     printf("Attendance saved for %s (%s).\n", record.name, record.status ? "In Hostel" : "Went Home");
 }
 

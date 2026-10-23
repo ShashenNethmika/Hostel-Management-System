@@ -16,7 +16,9 @@ __pycache__/
 /data/*_tmp.txt
 /data/temp_students.txt
 /data/*.tmp
+/data/*.tmp.*
 /data/*.bak
+/data/room_transaction.txt
 
 # Reference PDFs and Windows download metadata
 *.pdf

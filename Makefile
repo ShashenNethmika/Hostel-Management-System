@@ -22,7 +22,7 @@ run: build/hostel
 	./build/hostel
 
 test: build/hostel
-	python3 tests/integration.py ./build/hostel
+	python3 tests/run.py ./build/hostel
 
 clean:
 	rm -rf build

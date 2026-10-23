@@ -1,7 +1,8 @@
 #ifndef ROOMS_H
 #define ROOMS_H
 
-/* roomMenu() is the only function exposed to main.c */
+/* Recover a pending two-file update before any room data is read. */
+int recoverRoomTransaction(void);
 void roomMenu(void);
 
 #endif

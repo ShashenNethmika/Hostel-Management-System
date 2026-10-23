@@ -12,6 +12,8 @@
 
 #define ROOM_FILE "rooms.txt"
 #define ALLOCATION_FILE "allocations.txt"
+#define TRANSACTION_FILE "room_transaction.txt"
+#define TRANSACTION_HEADER "HOSTEL_ROOM_TRANSACTION_V1"
 #define MAX_ROOMS 200
 #define MAX_ALLOCATIONS 10000
 #define STUDENT_ID_LENGTH (STUDENT_ID_SIZE - 1)
@@ -31,41 +33,12 @@ static Room rooms[MAX_ROOMS];
 static Allocation allocations[MAX_ALLOCATIONS];
 static int roomCount = 0;
 static int allocationCount = 0;
-
-static void discardLine(void) {
-    int c;
-    while ((c = getchar()) != '\n' && c != EOF) {
-    }
-}
+static int roomStateFailed = 0;
 
 static int readRoomInteger(const char *prompt, int *number) {
     char buffer[128];
-    char *end;
-    long parsed;
-
-    printf("%s", prompt);
-    if (fgets(buffer, sizeof(buffer), stdin) == NULL) {
-        return -1;
-    }
-    if (strchr(buffer, '\n') == NULL && !feof(stdin)) {
-        discardLine();
-        return 0;
-    }
-
-    errno = 0;
-    parsed = strtol(buffer, &end, 10);
-    if (end == buffer || errno == ERANGE || parsed < INT_MIN || parsed > INT_MAX) {
-        return 0;
-    }
-    while (isspace((unsigned char)*end)) {
-        end++;
-    }
-    if (*end != '\0') {
-        return 0;
-    }
-
-    *number = (int)parsed;
-    return 1;
+    if (!readConsoleLine(prompt, buffer, sizeof(buffer))) return -1;
+    return parseInteger(buffer, INT_MIN, INT_MAX, number);
 }
 
 static int validStudentId(const char *id) {
@@ -81,22 +54,8 @@ static void normalizeStudentId(char *id) {
 
 static int readStudentId(char *id) {
     char buffer[128];
-    size_t len;
-
-    printf("Student ID: ");
-    if (fgets(buffer, sizeof(buffer), stdin) == NULL) {
-        return -1;
-    }
-    if (strchr(buffer, '\n') == NULL && !feof(stdin)) {
-        discardLine();
-        return 0;
-    }
-
-    len = strcspn(buffer, "\r\n");
-    buffer[len] = '\0';
-    if (!validStudentId(buffer)) {
-        return 0;
-    }
+    if (!readConsoleLine("Student ID: ", buffer, sizeof(buffer))) return -1;
+    if (!validStudentId(buffer)) return 0;
     strcpy(id, buffer);
     normalizeStudentId(id);
     return 1;
@@ -132,10 +91,22 @@ static int allocatedCountInRoom(int roomNo) {
     return total;
 }
 
-static int parseRoomRecord(const char *line, Room *r) {
-    char trailing;
-    return sscanf(line, "%d %d %d %c", &r->roomNo, &r->capacity,
-                  &r->occupied, &trailing) == 3;
+static int parseRoomRecord(char *line, Room *room) {
+    char *fields[3];
+    if (strchr(line, '|') != NULL || splitFields(line, fields, 3) != 3) return 0;
+    return parseInteger(fields[0], 1, INT_MAX, &room->roomNo) &&
+           parseInteger(fields[1], 1, INT_MAX, &room->capacity) &&
+           parseInteger(fields[2], 0, room->capacity, &room->occupied);
+}
+
+static int parseAllocationRecord(char *line, Allocation *allocation) {
+    char *fields[2];
+    if (strchr(line, '|') != NULL || splitFields(line, fields, 2) != 2 ||
+        !validStudentId(fields[0]) ||
+        !parseInteger(fields[1], 1, INT_MAX, &allocation->roomNo)) return 0;
+    strcpy(allocation->studentId, fields[0]);
+    normalizeStudentId(allocation->studentId);
+    return 1;
 }
 
 static int loadRooms(void) {
@@ -152,13 +123,14 @@ static int loadRooms(void) {
         return 0;
     }
 
-    while (fgets(line, sizeof(line), fp) != NULL) {
+    int result;
+    while ((result = readTextLine(fp, line, sizeof(line))) != TEXT_LINE_EOF) {
         Room r;
         char *p = line;
         lineNumber++;
 
-        if (strchr(line, '\n') == NULL && !feof(fp)) {
-            printf("Error: rooms.txt line %d is too long.\n", lineNumber);
+        if (result != TEXT_LINE_OK) {
+            printf("Error: invalid or unreadable rooms.txt line %d.\n", lineNumber);
             goto fail;
         }
         while (isspace((unsigned char)*p)) {
@@ -206,14 +178,14 @@ static int loadAllocations(void) {
             return 0;
         }
     } else {
-        while (fgets(line, sizeof(line), fp) != NULL) {
+        int result;
+        while ((result = readTextLine(fp, line, sizeof(line))) != TEXT_LINE_EOF) {
             Allocation a;
-            char extra;
             char *p = line;
             lineNumber++;
 
-            if (strchr(line, '\n') == NULL && !feof(fp)) {
-                printf("Error: allocations.txt line %d is too long.\n", lineNumber);
+            if (result != TEXT_LINE_OK) {
+                printf("Error: invalid or unreadable allocations.txt line %d.\n", lineNumber);
                 goto fail;
             }
             while (isspace((unsigned char)*p)) {
@@ -222,8 +194,7 @@ static int loadAllocations(void) {
             if (*p == '\0') {
                 continue;
             }
-            if (sscanf(p, "%29s %d %c", a.studentId, &a.roomNo, &extra) != 2 ||
-                !validStudentId(a.studentId) || a.roomNo <= 0 ||
+            if (!parseAllocationRecord(p, &a) ||
                 findRoom(a.roomNo) == -1) {
                 printf("Error: invalid allocation on line %d of allocations.txt.\n",
                        lineNumber);
@@ -272,92 +243,104 @@ fail:
     return 0;
 }
 
-static int commitTempFile(const char *temporary, const char *destination) {
-    char backup[128];
-    FILE *original;
-
-    if (rename(temporary, destination) == 0) {
-        return 1;
+static int saveRooms(void) {
+    char temporary[RECORD_LINE_SIZE];
+    FILE *file = createDataTempFile(ROOM_FILE, temporary);
+    if (file == NULL) { printDataFileError(ROOM_FILE); return 0; }
+    for (int i = 0; i < roomCount; i++) {
+        if (fprintf(file, "%d %d %d\n", rooms[i].roomNo,
+                    rooms[i].capacity, rooms[i].occupied) < 0) break;
     }
-
-    original = fopen(destination, "r");
-    if (original == NULL) {
-        remove(temporary);
-        return 0;
-    }
-    fclose(original);
-
-    if (snprintf(backup, sizeof(backup), "%s.bak", destination) >=
-        (int)sizeof(backup)) {
-        remove(temporary);
-        return 0;
-    }
-    if (remove(backup) != 0 && errno != ENOENT) {
-        remove(temporary);
-        return 0;
-    }
-    if (rename(destination, backup) != 0) {
-        remove(temporary);
-        return 0;
-    }
-    if (rename(temporary, destination) == 0) {
-        remove(backup);
-        return 1;
-    }
-    if (rename(backup, destination) != 0) {
-        printf("CRITICAL: restore %s from %s manually.\n", destination, backup);
-    }
-    remove(temporary);
+    if (commitDataTempFile(file, temporary, ROOM_FILE)) return 1;
+    printDataFileError(ROOM_FILE);
     return 0;
 }
 
-static int saveRooms(void) {
-    FILE *fp = fopen("rooms.txt.tmp", "w");
-    int i;
-    if (fp == NULL) {
-        perror("Cannot create rooms.txt.tmp");
+static int saveAllocations(void) {
+    char temporary[RECORD_LINE_SIZE];
+    FILE *file = createDataTempFile(ALLOCATION_FILE, temporary);
+    if (file == NULL) { printDataFileError(ALLOCATION_FILE); return 0; }
+    for (int i = 0; i < allocationCount; i++) {
+        if (fprintf(file, "%s %d\n", allocations[i].studentId,
+                    allocations[i].roomNo) < 0) break;
+    }
+    if (commitDataTempFile(file, temporary, ALLOCATION_FILE)) return 1;
+    printDataFileError(ALLOCATION_FILE);
+    return 0;
+}
+
+static int readTransactionCount(FILE *file, const char *expected, int maximum, int *count) {
+    char line[256], *fields[2];
+    return readTextLine(file, line, sizeof(line)) == TEXT_LINE_OK &&
+           strchr(line, '|') == NULL && splitFields(line, fields, 2) == 2 &&
+           strcmp(fields[0], expected) == 0 && parseInteger(fields[1], 0, maximum, count);
+}
+
+/* The journal contains a complete validated target state. Replaying it is safe
+ * even if the process previously stopped between the two file replacements. */
+int recoverRoomTransaction(void) {
+    FILE *file = fopen(TRANSACTION_FILE, "r");
+    if (file == NULL) {
+        if (errno == ENOENT) return 1;
+        perror("Cannot read room transaction");
         return 0;
     }
-    for (i = 0; i < roomCount; i++) {
-        if (fprintf(fp, "%d %d %d\n", rooms[i].roomNo,
-                    rooms[i].capacity, rooms[i].occupied) < 0) {
-            fclose(fp);
-            remove("rooms.txt.tmp");
-            return 0;
-        }
+    char line[256];
+    int expectedRooms, expectedAllocations;
+    roomCount = allocationCount = 0;
+    if (readTextLine(file, line, sizeof(line)) != TEXT_LINE_OK ||
+        strcmp(line, TRANSACTION_HEADER) != 0 ||
+        !readTransactionCount(file, "ROOMS", MAX_ROOMS, &expectedRooms)) goto invalid;
+    for (int i = 0; i < expectedRooms; i++) {
+        Room room;
+        if (readTextLine(file, line, sizeof(line)) != TEXT_LINE_OK ||
+            !parseRoomRecord(line, &room) || findRoom(room.roomNo) != -1) goto invalid;
+        rooms[roomCount++] = room;
     }
-    if (fclose(fp) != 0) {
-        remove("rooms.txt.tmp");
-        return 0;
+    if (!readTransactionCount(file, "ALLOCATIONS", MAX_ALLOCATIONS, &expectedAllocations)) goto invalid;
+    for (int i = 0; i < expectedAllocations; i++) {
+        Allocation allocation;
+        if (readTextLine(file, line, sizeof(line)) != TEXT_LINE_OK ||
+            !parseAllocationRecord(line, &allocation) || findRoom(allocation.roomNo) == -1 ||
+            findAllocation(allocation.studentId) != -1) goto invalid;
+        allocations[allocationCount++] = allocation;
     }
-    if (!commitTempFile("rooms.txt.tmp", ROOM_FILE)) {
-        printf("Error: rooms.txt could not be saved.\n");
+    if (readTextLine(file, line, sizeof(line)) != TEXT_LINE_OK || strcmp(line, "END") != 0 ||
+        readTextLine(file, line, sizeof(line)) != TEXT_LINE_EOF) goto invalid;
+    for (int i = 0; i < roomCount; i++) {
+        if (allocatedCountInRoom(rooms[i].roomNo) > rooms[i].occupied) goto invalid;
+    }
+    if (fclose(file) != 0) { printDataFileError(TRANSACTION_FILE); return 0; }
+    if (!saveRooms() || !saveAllocations() || remove(TRANSACTION_FILE) != 0) {
+        fprintf(stderr, "Room transaction is pending. Resolve the file error and restart to recover.\n");
         return 0;
     }
     return 1;
+
+invalid:
+    fclose(file);
+    roomCount = allocationCount = 0;
+    fprintf(stderr, "Invalid room transaction journal. Original room data was not changed.\n");
+    return 0;
 }
 
-static int saveAllocations(void) {
-    FILE *fp = fopen("allocations.txt.tmp", "w");
-    int i;
-    if (fp == NULL) {
-        perror("Cannot create allocations.txt.tmp");
+static int saveState(void) {
+    char temporary[RECORD_LINE_SIZE];
+    FILE *file = createDataTempFile(TRANSACTION_FILE, temporary);
+    if (file == NULL) {
+        printDataFileError(TRANSACTION_FILE);
+        roomStateFailed = 1;
         return 0;
     }
-    for (i = 0; i < allocationCount; i++) {
-        if (fprintf(fp, "%s %d\n", allocations[i].studentId,
-                    allocations[i].roomNo) < 0) {
-            fclose(fp);
-            remove("allocations.txt.tmp");
-            return 0;
-        }
-    }
-    if (fclose(fp) != 0) {
-        remove("allocations.txt.tmp");
-        return 0;
-    }
-    if (!commitTempFile("allocations.txt.tmp", ALLOCATION_FILE)) {
-        printf("Error: allocations.txt could not be saved.\n");
+    fprintf(file, "%s\nROOMS %d\n", TRANSACTION_HEADER, roomCount);
+    for (int i = 0; i < roomCount; i++)
+        fprintf(file, "%d %d %d\n", rooms[i].roomNo, rooms[i].capacity, rooms[i].occupied);
+    fprintf(file, "ALLOCATIONS %d\n", allocationCount);
+    for (int i = 0; i < allocationCount; i++)
+        fprintf(file, "%s %d\n", allocations[i].studentId, allocations[i].roomNo);
+    fprintf(file, "END\n");
+    if (!commitDataTempFile(file, temporary, TRANSACTION_FILE) || !recoverRoomTransaction()) {
+        roomStateFailed = 1;
         return 0;
     }
     return 1;
@@ -429,9 +412,8 @@ static void addRoom(void) {
     }
     r.occupied = 0;
     rooms[roomCount++] = r;
-    if (!saveRooms()) {
-        roomCount--;
-        printf("Room was NOT saved.\n");
+    if (!saveState()) {
+        printf("Room update could not be completed. Restart to retry recovery.\n");
         return;
     }
     printf("Room %d added successfully.\n", r.roomNo);
@@ -480,21 +462,9 @@ static void allocateStudent(void) {
     allocations[allocationCount].roomNo = roomNo;
     allocationCount++;
 
-    if (!saveAllocations()) {
-        allocationCount--;
-        printf("Student allocation was NOT saved.\n");
-        return;
-    }
-
     rooms[roomIndex].occupied++;
-    if (!saveRooms()) {
-        rooms[roomIndex].occupied--;
-        allocationCount--;
-        if (!saveAllocations()) {
-            printf("CRITICAL: allocations.txt may now disagree with rooms.txt.\n");
-            printf("Check both files before using this module again.\n");
-        }
-        printf("Student allocation could not be completed.\n");
+    if (!saveState()) {
+        printf("Student allocation could not be completed. Restart to retry recovery.\n");
         return;
     }
     printf("Student %s allocated to room %d. Occupied: %d/%d.\n",
@@ -531,25 +501,9 @@ static void removeStudent(void) {
     allocations[allocationIndex] = allocations[lastIndex];
     allocationCount--;
 
-    if (!saveAllocations()) {
-        allocationCount++;
-        allocations[lastIndex] = allocations[allocationIndex];
-        allocations[allocationIndex] = removed;
-        printf("Student removal was NOT saved.\n");
-        return;
-    }
-
     rooms[roomIndex].occupied--;
-    if (!saveRooms()) {
-        rooms[roomIndex].occupied++;
-        allocationCount++;
-        allocations[lastIndex] = allocations[allocationIndex];
-        allocations[allocationIndex] = removed;
-        if (!saveAllocations()) {
-            printf("CRITICAL: allocations.txt may now disagree with rooms.txt.\n");
-            printf("Check both files before using this module again.\n");
-        }
-        printf("Student removal could not be completed.\n");
+    if (!saveState()) {
+        printf("Student removal could not be completed. Restart to retry recovery.\n");
         return;
     }
     printf("Student %s removed from room %d. Occupied: %d/%d.\n",
@@ -559,7 +513,8 @@ static void removeStudent(void) {
 
 void roomMenu(void) {
     int choice, result;
-    if (!loadRooms() || !loadAllocations()) {
+    roomStateFailed = 0;
+    if (!recoverRoomTransaction() || !loadRooms() || !loadAllocations()) {
         printf("Fix room data files before using the Room Allocation menu.\n");
         return;
     }
@@ -589,5 +544,6 @@ void roomMenu(void) {
             case 0: return;
             default: printf("Invalid choice.\n");
         }
+        if (roomStateFailed) return;
     }
 }

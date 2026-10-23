@@ -18,6 +18,9 @@ int main(int argc, char **argv) {
     if (!configureDataDirectory(argc == 2 ? argv[1] : NULL)) {
         return EXIT_FAILURE;
     }
+    if (!recoverRoomTransaction()) {
+        return EXIT_FAILURE;
+    }
 
     for (;;) {
         int choice;

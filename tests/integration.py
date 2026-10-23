@@ -1,45 +1,17 @@
-"""Exercise the real CLI against disposable files; never edit project data."""
-import pathlib
+"""End-to-end CLI checks against disposable data."""
 import shutil
 import subprocess
+import pathlib
 import sys
-import tempfile
-import unittest
+
+if __name__ == "__main__":
+    # Keep the original test entry point working while running all regressions.
+    raise SystemExit(subprocess.call([sys.executable, str(pathlib.Path(__file__).with_name("run.py")), *sys.argv[1:]]))
+
+from cli_support import HostelTestCase, A, B, BINARY, PROJECT
 
 
-BINARY = pathlib.Path(sys.argv.pop(1)).resolve()
-PROJECT = pathlib.Path(__file__).resolve().parents[1]
-A = "TG2024000001"
-B = "TG2024000002"
-
-
-class HostelIntegration(unittest.TestCase):
-    def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix="hostel-test-")
-        self.addCleanup(self.temp.cleanup)
-        self.root = pathlib.Path(self.temp.name)
-        self.data = self.root / "data"
-        self.data.mkdir()
-        for name in ("students", "rooms", "allocations", "attendance", "payments"):
-            (self.data / f"{name}.txt").write_text("")
-
-    def run_cli(self, text, *, warnings=False):
-        result = subprocess.run(
-            [str(BINARY), str(self.data)], input=text, text=True,
-            cwd=self.root, capture_output=True, timeout=5,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
-        if not warnings:
-            self.assertEqual(result.stderr, "")
-        return result.stdout
-
-    def register(self):
-        output = self.run_cli(
-            f"1\n1\n{A}\nSample Student\n0771234567\n"
-            f"1\n{B}\nOther Student\n0777654321\n0\n0\n"
-        )
-        self.assertEqual(output.count("STUDENT REGISTERED SUCCESSFULLY"), 2)
-
+class HostelIntegration(HostelTestCase):
     def test_full_workflow_and_restart(self):
         self.register()
         output = self.run_cli(
@@ -175,7 +147,3 @@ class HostelIntegration(unittest.TestCase):
                                 capture_output=True, timeout=5)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Usage:", result.stderr)
-
-
-if __name__ == "__main__":
-    unittest.main(verbosity=2)

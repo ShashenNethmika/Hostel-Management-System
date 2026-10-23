@@ -62,6 +62,8 @@ digits, `/`, `-`, or `_`. Existing slash-separated IDs remain supported;
 slashes are not removed, so `TG/IT/1234` and `TGIT1234` are distinct IDs.
 Names can contain spaces; phone numbers require exactly 10 digits.
 Menus accept complete input lines and return safely on end of input.
+LF and CRLF line endings are accepted, including names at the maximum length.
+Embedded NUL bytes and overlong input are rejected as complete lines.
 
 ## Repository layout
 
@@ -99,6 +101,7 @@ PDFs, executable/object files, build output, temporary files, and Windows
 | `payments.txt` | `StudentID TotalFee PaidAmount` |
 | `fee_students.txt` | `StudentID\|Name\|RoomNumber\|MonthlyFee` (created by the fee menu) |
 | `unpaid_summary.txt` | Generated sorted unpaid balances; ignored by Git |
+| `room_transaction.txt` | Internal recovery journal for interrupted room/allocation updates; ignored by Git |
 
 Attendance status is `1` for in hostel and `0` for on leave. Dates use
 `YYYY-MM-DD`; `-` means no return date. New leave records require a valid
@@ -107,7 +110,8 @@ record is leave and its expected return date is before today. Dates use the
 machine's local timezone. Original `ID Status` samples and four-field attendance
 history remain readable; records without return dates are identified separately
 and cannot establish overdue status. Returning to the hostel clears current leave
-without deleting history.
+without deleting history. Future-dated attendance events are rejected; expected
+return dates can be in the future.
 
 The total hostel fee is Rs 50,000.00. Money is tracked in integer cents to
 preserve exact payment totals. The fee module keeps optional monthly-fee and
@@ -124,17 +128,42 @@ use the shared register. Do not use these mixed samples as live hostel records.
 Room records can include older occupants without ID allocations; those occupants
 cannot be removed by ID until their actual allocations are recorded.
 
+## File safety and recovery
+
+Student edits and payment/fee-profile updates validate existing records before
+writing. Malformed or duplicate IDs block changes so ambiguous data is preserved
+for correction. Read-only reports warn about malformed records; duplicate payment
+IDs or room numbers prevent the affected financial/occupancy calculation.
+Student summaries count each normalized ID once.
+
+Saves use uniquely created temporary files and atomic replacement. Appending
+student or attendance records also handles files without a final newline.
+Failed saves preserve the prior destination; stale temporary files cannot redirect
+writes to another file.
+
+Room allocation updates affect both `rooms.txt` and `allocations.txt`. A validated
+`room_transaction.txt` journal records the intended state before either file is
+replaced. Startup and room reports recover pending updates after a process
+interruption. If a file error prevents recovery, correct the reported filesystem
+problem and restart; check the recovered state before retrying the operation.
+Keep the journal until recovery succeeds. A malformed journal blocks startup
+without replacing the original data and needs manual correction from a known
+good backup. This recovery supports process interruption; it does not guarantee
+recovery after a machine power loss.
+
 ## Validation
 
 ```sh
 make test
 ```
 
-Eight integration tests exercise the real executable: registration/updates,
+Integration and regression tests exercise the real executable: registration/updates,
 cross-module data sharing, capacity/duplicate checks, attendance/overdue state,
 payment accumulation and exact balances, sorted reports, restart persistence,
-legacy/malformed records, invalid input/EOF, and supplied sample data.
+legacy/malformed records, invalid input/EOF, supplied sample data, integer
+overflow, NUL/CRLF boundaries, failed writes, and interrupted room recovery.
 Tests create temporary data directories and leave repository data unchanged.
+To test another build, run `python3 tests/run.py /path/to/hostel`.
 
 `make clean` removes only the ignored build directory. Rebuild with `make`.
 This single-user CLI should be run one instance at a time against a data directory.

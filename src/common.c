@@ -54,13 +54,39 @@ void warnInvalidRecord(const char *name, size_t lineNumber) {
     fprintf(stderr, "Warning: ignoring invalid %s record on line %zu.\n", name, lineNumber);
 }
 
+int readTextLine(FILE *file, char *line, size_t capacity) {
+    if (capacity < 2 || capacity > INT_MAX) return TEXT_LINE_ERROR;
+    size_t length = 0;
+    int ch, invalid = 0, sawByte = 0, pendingCR = 0;
+    while ((ch = fgetc(file)) != EOF) {
+        sawByte = 1;
+        if (ch == '\n') break;
+        /* Keep an interior CR, but do not charge the CRLF terminator against
+         * payload capacity. This also accepts a final line ending in CR. */
+        if (pendingCR) {
+            if (length < capacity - 1) line[length++] = '\r';
+            else invalid = 1;
+        }
+        pendingCR = ch == '\r';
+        if (pendingCR) continue;
+        if (ch == '\0') invalid = 1;
+        if (length < capacity - 1) line[length++] = (char)ch;
+        else invalid = 1;
+    }
+    line[length] = '\0';
+    if (ferror(file)) return TEXT_LINE_ERROR;
+    if (!sawByte) return TEXT_LINE_EOF;
+    if (invalid) return TEXT_LINE_INVALID;
+    return TEXT_LINE_OK;
+}
+
 int readDataLine(FILE *file, const char *name, char *line, size_t capacity,
                  size_t *lineNumber) {
-    while (fgets(line, (int)capacity, file) != NULL) {
+    int status;
+    while ((status = readTextLine(file, line, capacity)) != TEXT_LINE_EOF &&
+           status != TEXT_LINE_ERROR) {
         (*lineNumber)++;
-        if (strchr(line, '\n') == NULL && strlen(line) == capacity - 1) {
-            int ch;
-            while ((ch = fgetc(file)) != '\n' && ch != EOF) { }
+        if (status == TEXT_LINE_INVALID) {
             warnInvalidRecord(name, *lineNumber);
             continue;
         }
@@ -70,6 +96,49 @@ int readDataLine(FILE *file, const char *name, char *line, size_t capacity,
         return 1;
     }
     return 0;
+}
+
+FILE *createDataTempFile(const char *destination, char temporary[RECORD_LINE_SIZE]) {
+    int length = snprintf(temporary, RECORD_LINE_SIZE, "%s.tmp.XXXXXX", destination);
+    if (length < 0 || length >= RECORD_LINE_SIZE) return NULL;
+    int fd = mkstemp(temporary);
+    if (fd < 0) return NULL;
+    FILE *file = fdopen(fd, "w");
+    if (file == NULL) { close(fd); remove(temporary); }
+    return file;
+}
+
+int commitDataTempFile(FILE *file, const char *temporary, const char *destination) {
+    int saved = !ferror(file);
+    if (fflush(file) != 0) saved = 0;
+    if (saved && fsync(fileno(file)) != 0) saved = 0;
+    if (fclose(file) != 0) saved = 0;
+    if (saved && rename(temporary, destination) == 0) return 1;
+    remove(temporary);
+    return 0;
+}
+
+int appendDataRecord(const char *destination, const char *record) {
+    FILE *source = fopen(destination, "rb");
+    if (source == NULL && errno != ENOENT) return 0;
+    char temporary[RECORD_LINE_SIZE];
+    FILE *output = createDataTempFile(destination, temporary);
+    if (output == NULL) { if (source != NULL) fclose(source); return 0; }
+    int lastByte = '\n', saved = 1;
+    if (source != NULL) {
+        unsigned char buffer[4096];
+        size_t count;
+        while ((count = fread(buffer, 1, sizeof(buffer), source)) > 0) {
+            if (fwrite(buffer, 1, count, output) != count) { saved = 0; break; }
+            lastByte = buffer[count - 1];
+        }
+        if (ferror(source)) saved = 0;
+        if (fclose(source) != 0) saved = 0;
+    }
+    if (lastByte != '\n' && fputc('\n', output) == EOF) saved = 0;
+    if (fputs(record, output) == EOF) saved = 0;
+    if (!saved) { fclose(output); remove(temporary); return 0; }
+    return commitDataTempFile(output, temporary, destination);
 }
 
 int splitFields(char *line, char **fields, int maximum) {
@@ -187,11 +256,11 @@ int validPhoneNumber(const char *phone) {
 int readConsoleLine(const char *prompt, char *buffer, size_t capacity) {
     for (;;) {
         printf("%s", prompt);
-        if (fgets(buffer, (int)capacity, stdin) == NULL) return 0;
-        if (strchr(buffer, '\n') == NULL && strlen(buffer) == capacity - 1) {
-            int ch;
-            while ((ch = getchar()) != '\n' && ch != EOF) { }
-            printf("Input is too long.\n");
+        fflush(stdout);
+        int status = readTextLine(stdin, buffer, capacity);
+        if (status == TEXT_LINE_EOF || status == TEXT_LINE_ERROR) return 0;
+        if (status == TEXT_LINE_INVALID) {
+            printf("Invalid input: line is too long or contains a NUL byte.\n");
             continue;
         }
         char *trimmed = trimText(buffer);

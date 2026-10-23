@@ -20,14 +20,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef _WIN32
-#include <windows.h>
-#endif
-
 #define PAYMENT_FILE "payments.txt"
-#define TEMP_FILE    "payments_tmp.txt"
 #define STUDENT_FILE "fee_students.txt"
-#define STUDENT_TMP  "fee_students_tmp.txt"
 #define ID_LEN       30
 #define NAME_LEN     100
 #define TOTAL_CENTS  5000000L  /* Rs 50,000.00 */
@@ -56,26 +50,15 @@ typedef struct {
     size_t capacity;
 } StudentList;
 
-/* Read complete console input, rejecting overlong lines. */
+/* Read complete console input, rejecting overlong lines and embedded NULs. */
 static int readLine(char *buffer, size_t capacity) {
-    size_t len;
-    int ch;
-
-    if (fgets(buffer, (int)capacity, stdin) == NULL) {
-        return 0;  /* EOF / input error */
-    }
-
-    len = strlen(buffer);
-    if (len > 0 && buffer[len - 1] == '\n') {
-        buffer[len - 1] = '\0';
-        return 1;
-    }
-    if (len == capacity - 1) {
-        while ((ch = getchar()) != '\n' && ch != EOF) { }
-        printf("Input is too long.\n");
+    int status = readTextLine(stdin, buffer, capacity);
+    if (status == TEXT_LINE_EOF || status == TEXT_LINE_ERROR) return 0;
+    if (status == TEXT_LINE_INVALID) {
+        printf("Invalid input: line is too long or contains a NUL byte.\n");
         return -1;
     }
-    return 1;  /* valid final line without a newline */
+    return 1;
 }
 
 static char *trim(char *s) {
@@ -268,16 +251,16 @@ static int loadRecords(FeeList *list) {
         return 0;
     }
 
-    while (fgets(line, sizeof(line), fp) != NULL) {
+    int status;
+    while ((status = readTextLine(fp, line, sizeof(line))) != TEXT_LINE_EOF) {
         char id[ID_LEN + 1];
         char totalText[32], paidText[32], extra[2];
         long total, paid;
         FeeRecord record;
         ++lineNumber;
 
-        if (strlen(line) == sizeof(line) - 1 &&
-            line[sizeof(line) - 2] != '\n') {
-            printf("Invalid payments.txt: line %lu is too long.\n", lineNumber);
+        if (status != TEXT_LINE_OK) {
+            printf("Invalid payments.txt: malformed line %lu.\n", lineNumber);
             ok = 0;
             break;
         }
@@ -371,13 +354,13 @@ static int loadStudents(StudentList *list) {
         perror("Cannot read fee_students.txt");
         return 0;
     }
-    while (fgets(line, sizeof(line), fp) != NULL) {
+    int status;
+    while ((status = readTextLine(fp, line, sizeof(line))) != TEXT_LINE_EOF) {
         char *id, *name, *room, *monthly, *p;
         StudentInfo record;
         ++lineNumber;
-        if (strlen(line) == sizeof(line) - 1 &&
-            line[sizeof(line) - 2] != '\n') {
-            printf("Invalid fee_students.txt: line %lu is too long.\n", lineNumber);
+        if (status != TEXT_LINE_OK) {
+            printf("Invalid fee_students.txt: malformed line %lu.\n", lineNumber);
             ok = 0;
             break;
         }
@@ -395,6 +378,7 @@ static int loadStudents(StudentList *list) {
         if (!monthly) { ok = 0; goto invalid_student; }
         *monthly++ = '\0';
 
+        id = trim(id);
         normalizeStudentIndex(id);
         name = trim(name);
         room = trim(room);
@@ -421,93 +405,56 @@ invalid_student:
     return ok;
 }
 
-/* Write a complete, validated replacement. Rename replaces the file
- * atomically on POSIX; MoveFileEx replaces it on Windows. Never delete
- * the original first, and check for write/close/rename failures.
+/* Use an exclusively created temporary file, then atomically replace the
+ * destination. Existing stale temporary files cannot redirect these writes.
  */
 static int saveRecords(const FeeList *list) {
-    FILE *fp = fopen(TEMP_FILE, "w");
-    size_t i;
-    int ok = 1;
-
+    char temporary[RECORD_LINE_SIZE];
+    FILE *fp = createDataTempFile(PAYMENT_FILE, temporary);
     if (fp == NULL) {
         perror("Cannot create temporary payments file (check data directory)");
         return 0;
     }
-    for (i = 0; i < list->count; ++i) {
-        long p = list->items[i].paidCents;
+    for (size_t i = 0; i < list->count; ++i) {
+        long paid = list->items[i].paidCents;
         if (fprintf(fp, "%s 50000.00 %ld.%02ld\n",
-                    list->items[i].id, p / 100, p % 100) < 0) {
-            ok = 0;
-            break;
+                    list->items[i].id, paid / 100, paid % 100) < 0) {
+            fclose(fp);
+            remove(temporary);
+            printf("Cannot write payment data. Original file unchanged.\n");
+            return 0;
         }
     }
-    if (fclose(fp) != 0) ok = 0;
-    if (!ok) {
-        printf("Cannot finish writing payment data. Original file unchanged.\n");
-        remove(TEMP_FILE);
+    if (!commitDataTempFile(fp, temporary, PAYMENT_FILE)) {
+        printf("Cannot save payment data. Original file unchanged.\n");
         return 0;
     }
-
-#ifdef _WIN32
-    if (!MoveFileExA(TEMP_FILE, PAYMENT_FILE,
-                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-        printf("Cannot replace payments.txt (Windows error %lu).\n",
-               (unsigned long)GetLastError());
-        remove(TEMP_FILE);
-        return 0;
-    }
-#else
-    if (rename(TEMP_FILE, PAYMENT_FILE) != 0) {
-        perror("Cannot replace payments.txt");
-        remove(TEMP_FILE);
-        return 0;
-    }
-#endif
     return 1;
 }
 
-/* Write metadata transactionally via a temporary file, without modifying
- * existing payments. Failure keeps the previous student-details file intact.
- */
+/* Metadata changes never reset previously recorded payments. */
 static int saveStudents(const StudentList *list) {
-    FILE *fp = fopen(STUDENT_TMP, "w");
-    size_t i;
-    int ok = 1;
-    if (!fp) {
+    char temporary[RECORD_LINE_SIZE];
+    FILE *fp = createDataTempFile(STUDENT_FILE, temporary);
+    if (fp == NULL) {
         perror("Cannot create temporary student-details file (check data directory)");
         return 0;
     }
-    for (i = 0; i < list->count; ++i) {
-        const StudentInfo *r = &list->items[i];
+    for (size_t i = 0; i < list->count; ++i) {
+        const StudentInfo *record = &list->items[i];
         if (fprintf(fp, "%s|%s|%d|%ld.%02ld\n",
-                    r->id, r->name, r->roomNo,
-                    r->monthlyCents / 100, r->monthlyCents % 100) < 0) {
-            ok = 0;
-            break;
+                    record->id, record->name, record->roomNo,
+                    record->monthlyCents / 100, record->monthlyCents % 100) < 0) {
+            fclose(fp);
+            remove(temporary);
+            printf("Cannot write student details. Original file unchanged.\n");
+            return 0;
         }
     }
-    if (fclose(fp) != 0) ok = 0;
-    if (!ok) {
-        printf("Could not write student details. Original file unchanged.\n");
-        remove(STUDENT_TMP);
+    if (!commitDataTempFile(fp, temporary, STUDENT_FILE)) {
+        printf("Cannot save student details. Original file unchanged.\n");
         return 0;
     }
-#ifdef _WIN32
-    if (!MoveFileExA(STUDENT_TMP, STUDENT_FILE,
-                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-        printf("Cannot replace fee_students.txt (Windows error %lu).\n",
-               (unsigned long)GetLastError());
-        remove(STUDENT_TMP);
-        return 0;
-    }
-#else
-    if (rename(STUDENT_TMP, STUDENT_FILE) != 0) {
-        perror("Cannot replace fee_students.txt");
-        remove(STUDENT_TMP);
-        return 0;
-    }
-#endif
     return 1;
 }
 
