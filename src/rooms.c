@@ -1,3 +1,4 @@
+/* Original room allocation module: Prabodhini. Adapted for shared student records. */
 #include "rooms.h"
 #include "student.h"
 

@@ -1,3 +1,4 @@
+/* Original reports module: Shashen. Adapted for shared data and interfaces. */
 #include "reports.h"
 #include "common.h"
 #include "student.h"

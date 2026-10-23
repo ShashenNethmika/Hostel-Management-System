@@ -1,3 +1,4 @@
+/* Original main menu: Shashen. Adapted for the integrated application. */
 #include <stdio.h>
 #include <stdlib.h>
 

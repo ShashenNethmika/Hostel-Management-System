@@ -1,4 +1,4 @@
-/* Member 4 - Fee & Payment Tracking
+/* Original fees module: Chesmi. Adapted for shared student records and data paths.
  *
  * Payment file: payments.txt in the shared data directory
  * Payment format: Student_ID Total_Fee Paid_Amount

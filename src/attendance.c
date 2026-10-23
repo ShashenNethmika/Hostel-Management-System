@@ -1,4 +1,5 @@
-/* Member 3: Attendance & Leave Management. Last record per student is current. */
+/* Original attendance module: Tharushi. Adapted for integration and overdue leave.
+ * Last record per student is current. */
 #include "attendance.h"
 #include "common.h"
 #include "student.h"

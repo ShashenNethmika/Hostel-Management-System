@@ -1,4 +1,4 @@
-/* Member 1: Student Registration & Management. */
+/* Original student registration module: Ishara. Adapted for shared data and input. */
 #include "student.h"
 
 #include <errno.h>

@@ -4,6 +4,19 @@ A C console application for the group's hostel management mini project.
 All five member modules run through **one executable and one main menu**.
 Data is stored in text files and remains available after the program exits.
 
+## Group contributions
+
+| Member | Original contribution | Files |
+| --- | --- | --- |
+| Shashen | Main menu and reports/statistics | `src/main.c`, `src/reports.c`, `src/reports.h` |
+| Ishara | Student registration and management | `src/student.c`, `src/student.h` |
+| Tharushi | Attendance and leave management | `src/attendance.c`, `src/attendance.h` |
+| Prabodhini | Room allocation and management | `src/rooms.c`, `src/rooms.h` |
+| Chesmi | Fees and payment tracking | `src/fee.c`, `src/fee.h` |
+
+These credits identify the authors of the supplied group modules. The repository
+also includes subsequent integration changes, shared helpers, and tests.
+
 ## Build and run on Ubuntu
 
 Requirements: GCC with C11 support and Make. Python 3 is only needed for tests.
