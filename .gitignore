@@ -2,3 +2,23 @@
 *.o
 *.obj
 .vscode/
+
+# Local builds and previously committed executables
+/build/
+__pycache__/
+/src/student
+/src/reports
+/src/rooms
+/src/pay
+
+# Generated reports and temporary data files
+/data/unpaid_summary.txt
+/data/*_tmp.txt
+/data/temp_students.txt
+/data/*.tmp
+/data/*.bak
+
+# Reference PDFs and Windows download metadata
+*.pdf
+*.PDF
+*Zone.Identifier

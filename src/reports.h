@@ -1,10 +1,10 @@
 #ifndef REPORTS_H
 #define REPORTS_H
 
-void calculateAndDisplayDues();
-void calculateOccupancyRate();
-void generateLeaveReport();
-void generateSystemSummary();
-void reportsMenu();
+void calculateAndDisplayDues(void);
+void calculateOccupancyRate(void);
+void generateLeaveReport(void);
+void generateSystemSummary(void);
+void reportsMenu(void);
 
 #endif

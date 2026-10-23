@@ -1,202 +1,171 @@
-#include <stdio.h>
+/* Member 1: Student Registration & Management. */
+#include "student.h"
+
+#include <errno.h>
 #include <string.h>
 
-struct Student {
-    char index[30];
-    char name[50];
-    char phone[15];
-};
-
-int isIndexExist(char checkIndex[]) {
-    FILE *fp = fopen("students.txt", "r");
-    if (fp == NULL) {
-        return 0;
+int readStudentRecord(FILE *file, struct Student *student, size_t *lineNumber) {
+    char line[RECORD_LINE_SIZE];
+    while (readDataLine(file, "students.txt", line, sizeof(line), lineNumber)) {
+        char *fields[3];
+        if (splitFields(line, fields, 3) != 3 ||
+            !isValidStudentIndex(fields[0]) || !validStudentName(fields[1]) ||
+            !validPhoneNumber(fields[2])) {
+            warnInvalidRecord("students.txt", *lineNumber);
+            continue;
+        }
+        strcpy(student->studentID, fields[0]);
+        normalizeStudentIndex(student->studentID);
+        strcpy(student->name, fields[1]);
+        strcpy(student->phone, fields[2]);
+        return 1;
     }
+    return 0;
+}
 
-    struct Student temp;
-    while (fscanf(fp, "%s %s %s", temp.index, temp.name, temp.phone) != EOF) {
-        if (strcmp(temp.index, checkIndex) == 0) {
-            fclose(fp);
+int lookupStudent(const char *id, struct Student *student) {
+    FILE *file = fopen("students.txt", "r");
+    if (file == NULL) {
+        if (errno == ENOENT) return 0;
+        printDataFileError("students.txt");
+        return -1;
+    }
+    char normalized[STUDENT_ID_SIZE];
+    if (!isValidStudentIndex(id)) { fclose(file); return 0; }
+    strcpy(normalized, id);
+    normalizeStudentIndex(normalized);
+    size_t lineNumber = 0;
+    while (readStudentRecord(file, student, &lineNumber)) {
+        if (strcmp(normalized, student->studentID) == 0) {
+            fclose(file);
             return 1;
         }
     }
+    int failed = ferror(file);
+    fclose(file);
+    if (failed) printDataFileError("students.txt");
+    return failed ? -1 : 0;
+}
 
-    fclose(fp);
+static int readName(char name[STUDENT_NAME_SIZE]) {
+    while (readConsoleLine("Student Name: ", name, STUDENT_NAME_SIZE)) {
+        if (validStudentName(name)) return 1;
+        printf("Invalid name. Use a nonempty name without digits or '|'.\n");
+    }
     return 0;
 }
 
-void registerStudent() {
-    struct Student st;
-    int i, valid = 1, nvalid = 1, pvalid = 1;
-
-    printf("\nEnter your index Number: ");
-    scanf("%s", st.index);
-
-    if (strlen(st.index) != 10) {
-        valid = 0;
-    } else {
-        for (i = 0; i < 10; i++) {
-            if (st.index[i] == ' ') {
-                valid = 0;
-                break;
-            }
-        }
+static int readPhone(char phone[11]) {
+    char line[64];
+    while (readConsoleLine("Phone Number (10 digits): ", line, sizeof(line))) {
+        if (validPhoneNumber(line)) { strcpy(phone, line); return 1; }
+        printf("Invalid Phone Number! Enter exactly 10 digits.\n");
     }
-
-    if (valid == 0 || !(st.index[0] == 'T' || st.index[0] == 't') || !(st.index[1] == 'G' || st.index[1] == 'g')) {
-        printf("Invalid Index Number! Must be 10 characters and start with TG.\n");
-        return;
-    }
-
-    if (isIndexExist(st.index)) {
-        printf("Student already registered!\n");
-        return;
-    }
-
-    printf("Enter your Name: ");
-    scanf("%s", st.name);
-
-    int count = strlen(st.name);
-    for (i = 0; i < count; i++) {
-        if (st.name[i] >= '0' && st.name[i] <= '9') {
-            nvalid = 0;
-            break;
-        }
-    }
-
-    if (nvalid == 0) {
-        printf("Invalid Name! Numbers are not allowed in name.\n");
-        return;
-    }
-
-    printf("Enter your phone number: ");
-    scanf("%s", st.phone);
-
-    if (strlen(st.phone) != 10) {
-        pvalid = 0;
-    } else {
-        for (i = 0; i < 10; i++) {
-            if (st.phone[i] < '0' || st.phone[i] > '9') {
-                pvalid = 0;
-                break;
-            }
-        }
-    }
-
-    if (pvalid == 0) {
-        printf("Invalid Phone Number! Must be exactly 10 digits.\n");
-        return;
-    }
-
-    FILE *fp = fopen("students.txt", "a");
-    if (fp == NULL) {
-        printf("Error opening file!\n");
-        return;
-    }
-
-    fprintf(fp, "%s %s %s\n", st.index, st.name, st.phone);
-    fclose(fp);
-
-    printf("\n--- Validation Successful & Saved to File! ---\n");
-    printf("Index : %s\n", st.index);
-    printf("Name  : %s\n", st.name);
-    printf("Phone : %s\n", st.phone);
+    return 0;
 }
 
-void displayStudents() {
-    FILE *fp = fopen("students.txt", "r");
-    if (fp == NULL) {
-        printf("\nNo student records found!\n");
+static void printStudent(const struct Student *student) {
+    printf("Student ID   : %s\nStudent Name : %s\nPhone Number : %s\n",
+           student->studentID, student->name, student->phone);
+}
+
+static void registerStudent(void) {
+    struct Student student, existing;
+    if (!readStudentIndex("Student ID: ", student.studentID)) return;
+    int found = lookupStudent(student.studentID, &existing);
+    if (found < 0) return;
+    if (found) {
+        printf("Student ID Already Registered!\n");
         return;
     }
+    if (!readName(student.name) || !readPhone(student.phone)) return;
+    FILE *file = fopen("students.txt", "a");
+    if (file == NULL) { printDataFileError("students.txt"); return; }
+    int saved = fprintf(file, "%s|%s|%s\n", student.studentID, student.name, student.phone) >= 0;
+    if (fclose(file) != 0) saved = 0;
+    if (!saved) { printDataFileError("students.txt"); return; }
+    printf("\nSTUDENT REGISTERED SUCCESSFULLY\n");
+    printStudent(&student);
+}
 
-    struct Student st;
-    int count = 0;
-
-    printf("\n======================================================\n");
-    printf("                  REGISTERED STUDENTS                 \n");
-    printf("======================================================\n");
-    printf("%-20s %-20s %-15s\n", "Index Number", "Name", "Phone Number");
-    printf("------------------------------------------------------\n");
-
-    while (fscanf(fp, "%s %s %s", st.index, st.name, st.phone) != EOF) {
-        printf("%-20s %-20s %-15s\n", st.index, st.name, st.phone);
+static void viewStudents(void) {
+    FILE *file = fopen("students.txt", "r");
+    if (file == NULL) { printDataFileError("students.txt"); return; }
+    struct Student student;
+    size_t lineNumber = 0, count = 0;
+    printf("\n%-30s %-30s %s\n", "Student ID", "Student Name", "Phone Number");
+    while (readStudentRecord(file, &student, &lineNumber)) {
+        printf("%-30s %-30s %s\n", student.studentID, student.name, student.phone);
         count++;
     }
-
-    fclose(fp);
-
-    if (count == 0) {
-        printf("No records in file.\n");
-    } else {
-        printf("------------------------------------------------------\n");
-        printf("Total Students: %d\n", count);
-    }
+    if (ferror(file)) printDataFileError("students.txt");
+    else printf("Total Registered Students: %zu\n", count);
+    fclose(file);
 }
 
-void searchStudent() {
-    FILE *fp = fopen("students.txt", "r");
-    if (fp == NULL) {
-        printf("\nNo student records found!\n");
+static void searchStudent(void) {
+    char id[STUDENT_ID_SIZE];
+    struct Student student;
+    if (!readStudentIndex("Student ID to search: ", id)) return;
+    int found = lookupStudent(id, &student);
+    if (found == 1) { printf("\nSTUDENT FOUND\n"); printStudent(&student); }
+    else if (found == 0) printf("Student Not Found!\n");
+}
+
+static void updateStudent(void) {
+    char id[STUDENT_ID_SIZE];
+    struct Student student;
+    if (!readStudentIndex("Student ID to update: ", id)) return;
+    int found = lookupStudent(id, &student);
+    if (found < 0) return;
+    if (!found) { printf("Student Not Found!\n"); return; }
+    printf("\n1. Update Name\n2. Update Phone\n0. Cancel\n");
+    int choice;
+    if (!readMenuChoice(0, 2, &choice) || choice == 0) return;
+    if (choice == 1 && !readName(student.name)) return;
+    if (choice == 2 && !readPhone(student.phone)) return;
+
+    FILE *file = fopen("students.txt", "r");
+    if (file == NULL) { printDataFileError("students.txt"); return; }
+    FILE *temp = fopen("temp_students.txt", "w");
+    if (temp == NULL) { fclose(file); printDataFileError("temp_students.txt"); return; }
+    char line[RECORD_LINE_SIZE];
+    int saved = 1;
+    while (fgets(line, sizeof(line), file) != NULL) {
+        char copy[RECORD_LINE_SIZE], *fields[3];
+        strcpy(copy, line);
+        int fieldsRead = splitFields(copy, fields, 3);
+        if (fieldsRead == 3 && isValidStudentIndex(fields[0])) {
+            normalizeStudentIndex(fields[0]);
+        }
+        if (fieldsRead == 3 && strcmp(fields[0], id) == 0) {
+            if (fprintf(temp, "%s|%s|%s\n", student.studentID, student.name, student.phone) < 0)
+                saved = 0;
+        } else if (fputs(line, temp) == EOF) saved = 0;
+    }
+    if (ferror(file)) saved = 0;
+    fclose(file);
+    if (fclose(temp) != 0) saved = 0;
+    if (!saved || rename("temp_students.txt", "students.txt") != 0) {
+        remove("temp_students.txt");
+        printDataFileError("students.txt");
         return;
     }
-
-    char searchIndex[30];
-    printf("\nEnter Index Number to search: ");
-    scanf("%s", searchIndex);
-
-    struct Student st;
-    int found = 0;
-
-    while (fscanf(fp, "%s %s %s", st.index, st.name, st.phone) != EOF) {
-        if (strcmp(st.index, searchIndex) == 0) {
-            printf("\n--- Student Found ---\n");
-            printf("Index : %s\n", st.index);
-            printf("Name  : %s\n", st.name);
-            printf("Phone : %s\n", st.phone);
-            found = 1;
-            break;
-        }
-    }
-
-    fclose(fp);
-
-    if (!found) {
-        printf("Student with Index %s not found!\n", searchIndex);
-    }
+    printf("\nSTUDENT UPDATED SUCCESSFULLY!\n");
+    printStudent(&student);
 }
 
-int main() {
-    int choice;
-
-    while (1) {
-        printf("\n====================================\n");
-        printf("    STUDENT MANAGEMENT SYSTEM      \n");
-        printf("====================================\n");
-        printf("1. Register Student\n");
-        printf("2. Display All Students\n");
-        printf("3. Search Student\n");
-        printf("0. Exit\n");
-        printf("Enter your choice: ");
-        scanf("%d", &choice);
-
+void studentMenu(void) {
+    for (;;) {
+        printf("\n===== Student Registration & Management =====\n");
+        printf("1. Register Student\n2. View Students\n3. Search Student\n4. Update Student\n0. Back to Main Menu\n");
+        int choice;
+        if (!readMenuChoice(0, 4, &choice) || choice == 0) return;
         switch (choice) {
-            case 1:
-                registerStudent();
-                break;
-            case 2:
-                displayStudents();
-                break;
-            case 3:
-                searchStudent();
-                break;
-            case 0:
-                printf("Exiting system...\n");
-                return 0;
-            default:
-                printf("Invalid choice! Try again.\n");
+            case 1: registerStudent(); break;
+            case 2: viewStudents(); break;
+            case 3: searchStudent(); break;
+            case 4: updateStudent(); break;
         }
     }
-
-    return 0;
 }
