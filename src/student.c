@@ -7,10 +7,11 @@
 #include <stdlib.h>
 
 static int parseStudentLine(char *line, struct Student *student) {
+    int hasDelimiter = strchr(line, '|') != NULL;
     char *fields[3];
     int count = splitFields(line, fields, 3);
     if (count == 0) return 2; /* Blank line. */
-    if (count != 3 || !isValidStudentIndex(fields[0]) ||
+    if (!hasDelimiter || count != 3 || !isValidStudentIndex(fields[0]) ||
         !validStudentName(fields[1]) || !validPhoneNumber(fields[2])) return 0;
     strcpy(student->studentID, fields[0]);
     normalizeStudentIndex(student->studentID);
@@ -42,7 +43,7 @@ static int loadStudents(struct Student **students, size_t *count) {
     }
     size_t capacity = 0, lineNumber = 0;
     char line[RECORD_LINE_SIZE];
-    int status, loaded = 1;
+    int status, loaded = 1, diagnosed = 0;
     while ((status = readTextLine(file, line, sizeof(line))) != TEXT_LINE_EOF) {
         lineNumber++;
         struct Student student = {0};
@@ -50,12 +51,14 @@ static int loadStudents(struct Student **students, size_t *count) {
         if (parsed == 2) continue;
         if (parsed != 1) {
             fprintf(stderr, "Invalid students.txt: record on line %zu. No changes made.\n", lineNumber);
+            diagnosed = 1;
             loaded = 0;
             break;
         }
         for (size_t i = 0; i < *count; i++) {
             if (strcmp((*students)[i].studentID, student.studentID) == 0) {
                 fprintf(stderr, "Invalid students.txt: duplicate Student ID %s. No changes made.\n", student.studentID);
+                diagnosed = 1;
                 loaded = 0;
                 break;
             }
@@ -76,7 +79,7 @@ static int loadStudents(struct Student **students, size_t *count) {
     if (ferror(file)) loaded = 0;
     fclose(file);
     if (!loaded) {
-        printDataFileError("students.txt");
+        if (!diagnosed) printDataFileError("students.txt");
         free(*students);
         *students = NULL;
         *count = 0;
@@ -84,30 +87,54 @@ static int loadStudents(struct Student **students, size_t *count) {
     return loaded;
 }
 
-int lookupStudent(const char *id, struct Student *student) {
-    if (!isValidStudentIndex(id)) return 0;
+static int compareStudents(const void *left, const void *right) {
+    const struct Student *a = left, *b = right;
+    return strcmp(a->studentID, b->studentID);
+}
+
+int loadStudentRegister(struct StudentRegister *students) {
+    if (!loadStudents(&students->items, &students->count)) return 0;
+    if (students->count > 1)
+        qsort(students->items, students->count, sizeof(*students->items), compareStudents);
+    return 1;
+}
+
+void freeStudentRegister(struct StudentRegister *students) {
+    free(students->items);
+    students->items = NULL;
+    students->count = 0;
+}
+
+const struct Student *findRegisteredStudent(const struct StudentRegister *students, const char *id) {
+    if (!isValidStudentIndex(id)) return NULL;
     char normalized[STUDENT_ID_SIZE];
     strcpy(normalized, id);
     normalizeStudentIndex(normalized);
-    struct Student *students;
-    size_t count;
-    if (!loadStudents(&students, &count)) return -1;
-    int found = 0;
-    for (size_t i = 0; i < count; i++) {
-        if (strcmp(normalized, students[i].studentID) == 0) {
-            *student = students[i];
-            found = 1;
-            break;
-        }
+    size_t low = 0, high = students->count;
+    while (low < high) {
+        size_t middle = low + (high - low) / 2;
+        int order = strcmp(normalized, students->items[middle].studentID);
+        if (order == 0) return &students->items[middle];
+        if (order < 0) high = middle;
+        else low = middle + 1;
     }
-    free(students);
-    return found;
+    return NULL;
+}
+
+int lookupStudent(const char *id, struct Student *student) {
+    struct StudentRegister students;
+    if (!loadStudentRegister(&students)) return -1;
+    const struct Student *found = findRegisteredStudent(&students, id);
+    int present = found != NULL;
+    if (present) *student = *found;
+    freeStudentRegister(&students);
+    return present;
 }
 
 static int readName(char name[STUDENT_NAME_SIZE]) {
     while (readConsoleLine("Student Name: ", name, STUDENT_NAME_SIZE)) {
         if (validStudentName(name)) return 1;
-        printf("Invalid name. Use a nonempty name without digits or '|'.\n");
+        fprintf(stderr, "Invalid name. Use a nonempty name without digits or '|'.\n");
     }
     return 0;
 }
@@ -116,7 +143,7 @@ static int readPhone(char phone[11]) {
     char line[64];
     while (readConsoleLine("Phone Number (10 digits): ", line, sizeof(line))) {
         if (validPhoneNumber(line)) { strcpy(phone, line); return 1; }
-        printf("Invalid Phone Number! Enter exactly 10 digits.\n");
+        fprintf(stderr, "Invalid Phone Number! Enter exactly 10 digits.\n");
     }
     return 0;
 }
@@ -132,7 +159,7 @@ static void registerStudent(void) {
     int found = lookupStudent(student.studentID, &existing);
     if (found < 0) return;
     if (found) {
-        printf("Student ID Already Registered!\n");
+        fprintf(stderr, "Student ID Already Registered!\n");
         return;
     }
     if (!readName(student.name) || !readPhone(student.phone)) return;
@@ -164,7 +191,7 @@ static void searchStudent(void) {
     if (!readStudentIndex("Student ID to search: ", id)) return;
     int found = lookupStudent(id, &student);
     if (found == 1) { printf("\nSTUDENT FOUND\n"); printStudent(&student); }
-    else if (found == 0) printf("Student Not Found!\n");
+    else if (found == 0) fprintf(stderr, "Student Not Found!\n");
 }
 
 static void updateStudent(void) {
@@ -176,7 +203,7 @@ static void updateStudent(void) {
     size_t index;
     for (index = 0; index < count; index++)
         if (strcmp(students[index].studentID, id) == 0) break;
-    if (index == count) { printf("Student Not Found!\n"); free(students); return; }
+    if (index == count) { fprintf(stderr, "Student Not Found!\n"); free(students); return; }
     printf("\n1. Update Name\n2. Update Phone\n0. Cancel\n");
     int choice;
     if (!readMenuChoice(0, 2, &choice) || choice == 0 ||

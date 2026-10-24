@@ -26,10 +26,11 @@ class HostelTestCase(unittest.TestCase):
             [str(BINARY), str(self.data)], input=text, text=True,
             cwd=self.root, capture_output=True, timeout=5,
         )
+        self.last_run = result
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         if not warnings:
             self.assertEqual(result.stderr, "")
-        return result.stdout
+        return result.stdout + result.stderr if warnings else result.stdout
 
     def register(self):
         output = self.run_cli(

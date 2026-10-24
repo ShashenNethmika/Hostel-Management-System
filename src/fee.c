@@ -1,737 +1,504 @@
 /* Original fees module: H.G.Chesmi Tharushika (TG IT 2025 2465).
- * Adapted for shared student records and data paths.
- *
- * Payment file: payments.txt in the shared data directory
- * Payment format: Student_ID Total_Fee Paid_Amount
- * Example: TgIt20252469 50000.00 15000.00
- * Student details: fee_students.txt (ID|Name|RoomNo|MonthlyFee)
- * Monthly fee is stored separately; the total payable remains Rs 50,000.
- *
- * Only feeMenu() is public. No main() is defined here.
+ * Adapted for shared student records, actual allocations, and exact-cent money.
+ * payments.txt: StudentID TotalFee PaidAmount
+ * fee_students.txt: StudentID|MonthlyFee
+ * Legacy four-field profiles are validated and migrated without changing payments.
  */
-
 #include "fee.h"
 #include "student.h"
+#include "rooms.h"
 
-#include <ctype.h>
 #include <errno.h>
 #include <limits.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #define PAYMENT_FILE "payments.txt"
-#define STUDENT_FILE "fee_students.txt"
-#define ID_LEN       30
-#define NAME_LEN     100
-#define TOTAL_CENTS  5000000L  /* Rs 50,000.00 */
+#define PROFILE_FILE "fee_students.txt"
+#define TOTAL_CENTS 5000000LL
 
-typedef struct {
-    char id[ID_LEN];
-    long paidCents;
-} FeeRecord;
+struct FeeRecord {
+    char id[STUDENT_ID_SIZE];
+    long long paidCents;
+};
 
-typedef struct {
-    FeeRecord *items;
+struct FeeList {
+    struct FeeRecord *items;
     size_t count;
     size_t capacity;
-} FeeList;
+};
 
-typedef struct {
-    char id[ID_LEN];
-    char name[NAME_LEN];
-    int roomNo;
-    long monthlyCents;
-} StudentInfo;
+struct FeeProfile {
+    char id[STUDENT_ID_SIZE];
+    long long monthlyCents;
+};
 
-typedef struct {
-    StudentInfo *items;
+struct ProfileList {
+    struct FeeProfile *items;
     size_t count;
     size_t capacity;
-} StudentList;
+};
 
-/* Read complete console input, rejecting overlong lines and embedded NULs. */
-static int readLine(char *buffer, size_t capacity) {
-    int status = readTextLine(stdin, buffer, capacity);
-    if (status == TEXT_LINE_EOF || status == TEXT_LINE_ERROR) return 0;
-    if (status == TEXT_LINE_INVALID) {
-        printf("Invalid input: line is too long or contains a NUL byte.\n");
-        return -1;
-    }
-    return 1;
+static int compareFeeIds(const void *left, const void *right) {
+    const struct FeeRecord *a = left, *b = right;
+    return strcmp(a->id, b->id);
 }
 
-static char *trim(char *s) {
-    char *end;
-    while (isspace((unsigned char)*s)) s++;
-    end = s + strlen(s);
-    while (end > s && isspace((unsigned char)end[-1])) --end;
-    *end = '\0';
-    return s;
+static int compareProfileIds(const void *left, const void *right) {
+    const struct FeeProfile *a = left, *b = right;
+    return strcmp(a->id, b->id);
 }
 
-/* Share the registration module's ID rules, including legacy slash IDs. */
-static int validId(const char *id) {
-    return isValidStudentIndex(id);
-}
-
-static int readStudentId(char id[ID_LEN]) {
-    char line[128];
-    char *s;
-
-    printf("Student ID: ");
-    if (readLine(line, sizeof(line)) != 1) return 0;
-    s = trim(line);
-    normalizeStudentIndex(s);
-    /* Student ID must start with "TG" (e.g. TG1234). */
-    if (strncmp(s, "TG", 2) != 0) {
-        printf("Invalid Student ID. ID must start with \"TG\".\n");
-        return 0;
-    }
-    if (!validId(s)) {
-        printf("Invalid Student ID (3-%d characters; letters, numbers, /, - or _).\n",
-               ID_LEN - 1);
-        return 0;
-    }
-    strcpy(id, s);
-    return 1;
-}
-
-/* Only one-line printable names, without the '|' file delimiter. */
-static int validName(const char *name) {
-    size_t i, len = strlen(name);
-    if (len == 0 || len >= NAME_LEN) return 0;
-    for (i = 0; i < len; ++i) {
-        unsigned char c = (unsigned char)name[i];
-        if (c == '|' || iscntrl(c)) return 0;
-    }
-    return 1;
-}
-
-static int parseRoomNo(const char *text, int *room) {
-    char *end;
-    long n;
-    if (*text == '\0') return 0;
-    /* Disallow signs and leading non-digit characters. */
-    {
-        const char *p;
-        for (p = text; *p; ++p) {
-            if (!isdigit((unsigned char)*p)) return 0;
-        }
-    }
-    errno = 0;
-    n = strtol(text, &end, 10);
-    if (errno == ERANGE || *end != '\0' || n <= 0 || n > INT_MAX) return 0;
-    *room = (int)n;
-    return 1;
-}
-
-static int readRoomNo(int *room) {
-    char line[128];
-    printf("Room No: ");
-    if (readLine(line, sizeof(line)) != 1) return 0;
-    if (!parseRoomNo(trim(line), room)) {
-        printf("Invalid room number (enter a positive whole number).\n");
-        return 0;
-    }
-    return 1;
-}
-
-/* Convert a nonnegative amount to exact cents (max Rs 50,000.00).
- * Rejects partial input, NaN, signs, exponents and >2 decimals.
- */
-static int parseFeeMoney(const char *s, long *cents) {
-    long whole = 0;
-    long fraction = 0;
-    int digits = 0;
-    int fractionDigits = 0;
-
-    if (*s == '\0') return 0;
-    while (*s >= '0' && *s <= '9') {
-        int digit = *s++ - '0';
-        if (whole > (TOTAL_CENTS / 100 - digit) / 10) return 0;
-        whole = whole * 10 + digit;
-        ++digits;
-    }
-    if (digits == 0) return 0;
-
-    if (*s == '.') {
-        ++s;
-        while (*s >= '0' && *s <= '9') {
-            if (fractionDigits >= 2) return 0;
-            fraction = fraction * 10 + (*s++ - '0');
-            ++fractionDigits;
-        }
-        if (fractionDigits == 0) return 0;
-        if (fractionDigits == 1) fraction *= 10;
-    }
-    if (*s != '\0') return 0;
-
-    *cents = whole * 100 + fraction;
-    return *cents <= TOTAL_CENTS;
-}
-
-static int readPaymentAmount(long *cents) {
-    char line[128];
-    char *amount;
-
-    printf("Amount to pay (Rs): ");
-    if (readLine(line, sizeof(line)) != 1) return 0;
-    amount = trim(line);
-    if (!parseFeeMoney(amount, cents) || *cents == 0) {
-        printf("Invalid amount. Enter a positive amount with up to 2 decimals.\n");
-        return 0;
-    }
-    return 1;
-}
-
-static int readMonthlyFee(long *cents) {
-    char line[128];
-    printf("Monthly Fee (Rs): ");
-    if (readLine(line, sizeof(line)) != 1) return 0;
-    if (!parseFeeMoney(trim(line), cents) || *cents <= 0) {
-        printf("Invalid monthly fee (Rs 0.01 - Rs 50000.00; up to 2 decimals).\n");
-        return 0;
-    }
-    return 1;
-}
-
-static void freeRecords(FeeList *list) {
-    free(list->items);
-    list->items = NULL;
-    list->count = 0;
-    list->capacity = 0;
-}
-
-static int pushRecord(FeeList *list, FeeRecord record) {
-    FeeRecord *grown;
-    size_t newCapacity;
-
+static int pushFee(struct FeeList *list, const struct FeeRecord *record) {
     if (list->count == list->capacity) {
-        newCapacity = list->capacity ? list->capacity * 2 : 16;
-        if (newCapacity < list->capacity ||
-            newCapacity > ((size_t)-1) / sizeof(FeeRecord)) {
-            printf("Too many payment records.\n");
+        size_t next = list->capacity == 0 ? 16 : list->capacity * 2;
+        if (next < list->capacity || next > (size_t)-1 / sizeof(*list->items)) {
+            fprintf(stderr, "Too many payment records.\n");
             return 0;
         }
-        grown = (FeeRecord *)realloc(list->items,
-                                     newCapacity * sizeof(FeeRecord));
-        if (grown == NULL) {
-            printf("Not enough memory to load payment records.\n");
-            return 0;
-        }
+        struct FeeRecord *grown = realloc(list->items, next * sizeof(*list->items));
+        if (grown == NULL) { fprintf(stderr, "Cannot allocate payment records.\n"); return 0; }
         list->items = grown;
-        list->capacity = newCapacity;
+        list->capacity = next;
     }
-    list->items[list->count++] = record;
+    list->items[list->count++] = *record;
     return 1;
 }
 
-static FeeRecord *findRecord(FeeList *list, const char *id) {
-    size_t i;
-    for (i = 0; i < list->count; ++i) {
-        if (strcmp(list->items[i].id, id) == 0) return &list->items[i];
-    }
-    return NULL;
-}
-
-/* Load and validate every line BEFORE any editing, so a broken data file
- * is never silently truncated or partly rewritten.
- */
-static int loadRecords(FeeList *list) {
-    FILE *fp;
-    char line[256];
-    unsigned long lineNumber = 0;
-    int ok = 1;
-
-    fp = fopen(PAYMENT_FILE, "r");
-    if (fp == NULL) {
-        if (errno == ENOENT) return 1;  /* new project / empty database */
-        perror("Cannot read payments.txt");
-        return 0;
-    }
-
-    int status;
-    while ((status = readTextLine(fp, line, sizeof(line))) != TEXT_LINE_EOF) {
-        char id[ID_LEN + 1];
-        char totalText[32], paidText[32], extra[2];
-        long total, paid;
-        FeeRecord record;
-        ++lineNumber;
-
-        if (status != TEXT_LINE_OK) {
-            printf("Invalid payments.txt: malformed line %lu.\n", lineNumber);
-            ok = 0;
-            break;
-        }
-        if (*trim(line) == '\0') continue; /* blank lines are harmless */
-
-        if (sscanf(line, "%30s %31s %31s %1s",
-                   id, totalText, paidText, extra) != 3 ||
-            !validId(id) ||
-            !parseFeeMoney(totalText, &total) || total != TOTAL_CENTS ||
-            !parseFeeMoney(paidText, &paid) || paid > total) {
-            printf("Invalid payments.txt: bad record on line %lu.\n", lineNumber);
-            ok = 0;
-            break;
-        }
-        normalizeStudentIndex(id);
-        if (findRecord(list, id) != NULL) {
-            printf("Invalid payments.txt: duplicate Student ID %s on line %lu.\n",
-                   id, lineNumber);
-            ok = 0;
-            break;
-        }
-        strcpy(record.id, id);
-        record.paidCents = paid;
-        if (!pushRecord(list, record)) {
-            ok = 0;
-            break;
-        }
-    }
-    if (ferror(fp)) {
-        perror("Error reading payments.txt");
-        ok = 0;
-    }
-    if (fclose(fp) != 0) {
-        perror("Error closing payments.txt");
-        ok = 0;
-    }
-    if (!ok) freeRecords(list);
-    return ok;
-}
-
-/* Student information is kept OUT of payments.txt, preserving reports.c's
- * strict three-space-separated-fields format. Names can contain spaces.
- * Each line is: StudentID|Student Name|RoomNo|MonthlyFee
- */
-static void freeStudents(StudentList *list) {
-    free(list->items);
-    list->items = NULL;
-    list->count = 0;
-    list->capacity = 0;
-}
-
-static StudentInfo *findStudent(StudentList *list, const char *id) {
-    size_t i;
-    for (i = 0; i < list->count; ++i) {
-        if (strcmp(list->items[i].id, id) == 0) return &list->items[i];
-    }
-    return NULL;
-}
-
-static int pushStudent(StudentList *list, StudentInfo record) {
-    StudentInfo *grown;
-    size_t newCapacity;
+static int pushProfile(struct ProfileList *list, const struct FeeProfile *profile) {
     if (list->count == list->capacity) {
-        newCapacity = list->capacity ? list->capacity * 2 : 16;
-        if (newCapacity < list->capacity ||
-            newCapacity > ((size_t)-1) / sizeof(StudentInfo)) {
-            printf("Too many student records.\n");
+        size_t next = list->capacity == 0 ? 16 : list->capacity * 2;
+        if (next < list->capacity || next > (size_t)-1 / sizeof(*list->items)) {
+            fprintf(stderr, "Too many fee profiles.\n");
             return 0;
         }
-        grown = (StudentInfo *)realloc(list->items,
-                                       newCapacity * sizeof(StudentInfo));
-        if (!grown) {
-            printf("Not enough memory to load student details.\n");
-            return 0;
-        }
+        struct FeeProfile *grown = realloc(list->items, next * sizeof(*list->items));
+        if (grown == NULL) { fprintf(stderr, "Cannot allocate fee profiles.\n"); return 0; }
         list->items = grown;
-        list->capacity = newCapacity;
+        list->capacity = next;
     }
-    list->items[list->count++] = record;
+    list->items[list->count++] = *profile;
     return 1;
 }
 
-static int loadStudents(StudentList *list) {
-    FILE *fp = fopen(STUDENT_FILE, "r");
-    char line[512];
-    unsigned long lineNumber = 0;
-    int ok = 1;
+static void freeFees(struct FeeList *list) {
+    free(list->items);
+    *list = (struct FeeList){0};
+}
 
-    if (!fp) {
-        if (errno == ENOENT) return 1; /* allow projects with old fee data */
-        perror("Cannot read fee_students.txt");
+static void freeProfiles(struct ProfileList *list) {
+    free(list->items);
+    *list = (struct ProfileList){0};
+}
+
+/* Load the entire financial file before editing. Duplicate detection is sorted
+ * rather than re-scanning all previous records for every line. */
+static int loadFees(struct FeeList *list) {
+    FILE *file = fopen(PAYMENT_FILE, "rb");
+    if (file == NULL) {
+        if (errno == ENOENT) return 1;
+        printDataFileError(PAYMENT_FILE);
         return 0;
     }
-    int status;
-    while ((status = readTextLine(fp, line, sizeof(line))) != TEXT_LINE_EOF) {
-        char *id, *name, *room, *monthly, *p;
-        StudentInfo record;
-        ++lineNumber;
-        if (status != TEXT_LINE_OK) {
-            printf("Invalid fee_students.txt: malformed line %lu.\n", lineNumber);
-            ok = 0;
+    char line[RECORD_LINE_SIZE];
+    size_t lineNumber = 0;
+    int status, loaded = 1;
+    while ((status = readTextLine(file, line, sizeof(line))) != TEXT_LINE_EOF) {
+        lineNumber++;
+        char *fields[3];
+        struct FeeRecord record;
+        long long total;
+        if (status != TEXT_LINE_OK || strchr(line, '|') != NULL) {
+            fprintf(stderr, "Invalid payments.txt: malformed line %zu.\n", lineNumber);
+            loaded = 0;
             break;
         }
-        p = trim(line);
-        if (*p == '\0') continue;
-
-        id = p;
-        name = strchr(id, '|');
-        if (!name) { ok = 0; goto invalid_student; }
-        *name++ = '\0';
-        room = strchr(name, '|');
-        if (!room) { ok = 0; goto invalid_student; }
-        *room++ = '\0';
-        monthly = strchr(room, '|');
-        if (!monthly) { ok = 0; goto invalid_student; }
-        *monthly++ = '\0';
-
-        id = trim(id);
-        normalizeStudentIndex(id);
-        name = trim(name);
-        room = trim(room);
-        monthly = trim(monthly);
-        if (!validId(id) || !validName(name) ||
-            !parseRoomNo(room, &record.roomNo) ||
-            !parseFeeMoney(monthly, &record.monthlyCents) ||
-            record.monthlyCents <= 0 || findStudent(list, id) != NULL) {
-            ok = 0;
-            goto invalid_student;
+        int count = splitFields(line, fields, 3);
+        if (count == 0) continue;
+        if (count != 3 || !isValidStudentIndex(fields[0]) ||
+            !parseMoney(fields[1], &total) || total != TOTAL_CENTS ||
+            !parseMoney(fields[2], &record.paidCents) || record.paidCents > total) {
+            fprintf(stderr, "Invalid payments.txt: bad record on line %zu.\n", lineNumber);
+            loaded = 0;
+            break;
         }
-        strcpy(record.id, id);
-        strcpy(record.name, name);
-        if (!pushStudent(list, record)) { ok = 0; break; }
-        continue;
-invalid_student:
-        printf("Invalid fee_students.txt: bad or duplicate record on line %lu.\n",
-               lineNumber);
-        break;
+        strcpy(record.id, fields[0]);
+        normalizeStudentIndex(record.id);
+        if (!pushFee(list, &record)) { loaded = 0; break; }
     }
-    if (ferror(fp)) { perror("Error reading fee_students.txt"); ok = 0; }
-    if (fclose(fp) != 0) { perror("Error closing fee_students.txt"); ok = 0; }
-    if (!ok) freeStudents(list);
-    return ok;
-}
-
-/* Use an exclusively created temporary file, then atomically replace the
- * destination. Existing stale temporary files cannot redirect these writes.
- */
-static int saveRecords(const FeeList *list) {
-    char temporary[RECORD_LINE_SIZE];
-    FILE *fp = createDataTempFile(PAYMENT_FILE, temporary);
-    if (fp == NULL) {
-        perror("Cannot create temporary payments file (check data directory)");
-        return 0;
+    if (ferror(file)) loaded = 0;
+    if (fclose(file) != 0 && loaded) {
+        printDataFileError(PAYMENT_FILE);
+        loaded = 0;
     }
-    for (size_t i = 0; i < list->count; ++i) {
-        long paid = list->items[i].paidCents;
-        if (fprintf(fp, "%s 50000.00 %ld.%02ld\n",
-                    list->items[i].id, paid / 100, paid % 100) < 0) {
-            fclose(fp);
-            remove(temporary);
-            printf("Cannot write payment data. Original file unchanged.\n");
-            return 0;
+    if (loaded && list->count > 1) qsort(list->items, list->count, sizeof(*list->items), compareFeeIds);
+    for (size_t i = 1; loaded && i < list->count; i++) {
+        if (strcmp(list->items[i - 1].id, list->items[i].id) == 0) {
+            fprintf(stderr, "Invalid payments.txt: duplicate Student ID %s.\n", list->items[i].id);
+            loaded = 0;
         }
     }
-    if (!commitDataTempFile(fp, temporary, PAYMENT_FILE)) {
-        printf("Cannot save payment data. Original file unchanged.\n");
-        return 0;
-    }
-    return 1;
+    if (!loaded) freeFees(list);
+    return loaded;
 }
 
-/* Metadata changes never reset previously recorded payments. */
-static int saveStudents(const StudentList *list) {
-    char temporary[RECORD_LINE_SIZE];
-    FILE *fp = createDataTempFile(STUDENT_FILE, temporary);
-    if (fp == NULL) {
-        perror("Cannot create temporary student-details file (check data directory)");
+/* Accept current ID|MonthlyFee and old ID|Name|RoomNo|MonthlyFee records.
+ * Old names/rooms are validated, but never used as current business facts. */
+static int loadProfiles(struct ProfileList *list, int *legacyFound) {
+    *legacyFound = 0;
+    FILE *file = fopen(PROFILE_FILE, "rb");
+    if (file == NULL) {
+        if (errno == ENOENT) return 1;
+        printDataFileError(PROFILE_FILE);
         return 0;
     }
-    for (size_t i = 0; i < list->count; ++i) {
-        const StudentInfo *record = &list->items[i];
-        if (fprintf(fp, "%s|%s|%d|%ld.%02ld\n",
-                    record->id, record->name, record->roomNo,
-                    record->monthlyCents / 100, record->monthlyCents % 100) < 0) {
-            fclose(fp);
-            remove(temporary);
-            printf("Cannot write student details. Original file unchanged.\n");
-            return 0;
+    char line[RECORD_LINE_SIZE];
+    size_t lineNumber = 0;
+    int status, loaded = 1;
+    while ((status = readTextLine(file, line, sizeof(line))) != TEXT_LINE_EOF) {
+        lineNumber++;
+        char *fields[4];
+        struct FeeProfile profile;
+        if (status != TEXT_LINE_OK) {
+            fprintf(stderr, "Invalid fee_students.txt: malformed line %zu.\n", lineNumber);
+            loaded = 0;
+            break;
+        }
+        int hasSeparator = strchr(line, '|') != NULL;
+        int count = splitFields(line, fields, 4);
+        if (count == 0) continue;
+        int room;
+        if (!hasSeparator || (count != 2 && count != 4) ||
+            !isValidStudentIndex(fields[0]) ||
+            (count == 4 && (!validStudentName(fields[1]) ||
+                            !parseInteger(fields[2], 1, INT_MAX, &room))) ||
+            !parseMoney(fields[count == 4 ? 3 : 1], &profile.monthlyCents) ||
+            profile.monthlyCents <= 0 || profile.monthlyCents > TOTAL_CENTS) {
+            fprintf(stderr, "Invalid fee_students.txt: bad record on line %zu.\n", lineNumber);
+            loaded = 0;
+            break;
+        }
+        strcpy(profile.id, fields[0]);
+        normalizeStudentIndex(profile.id);
+        if (count == 4) *legacyFound = 1;
+        if (!pushProfile(list, &profile)) { loaded = 0; break; }
+    }
+    if (ferror(file)) loaded = 0;
+    if (fclose(file) != 0 && loaded) {
+        printDataFileError(PROFILE_FILE);
+        loaded = 0;
+    }
+    if (loaded && list->count > 1) qsort(list->items, list->count, sizeof(*list->items), compareProfileIds);
+    for (size_t i = 1; loaded && i < list->count; i++) {
+        if (strcmp(list->items[i - 1].id, list->items[i].id) == 0) {
+            fprintf(stderr, "Invalid fee_students.txt: duplicate Student ID %s.\n", list->items[i].id);
+            loaded = 0;
         }
     }
-    if (!commitDataTempFile(fp, temporary, STUDENT_FILE)) {
-        printf("Cannot save student details. Original file unchanged.\n");
-        return 0;
-    }
-    return 1;
+    if (!loaded) freeProfiles(list);
+    return loaded;
 }
 
-/* Returns the optional student details for one ID. */
-static const StudentInfo *studentForId(const StudentList *students, const char *id) {
-    size_t i;
-    for (i = 0; i < students->count; ++i) {
-        if (strcmp(students->items[i].id, id) == 0) return &students->items[i];
+static struct FeeRecord *findFee(struct FeeList *list, const char *id) {
+    size_t low = 0, high = list->count;
+    while (low < high) {
+        size_t middle = low + (high - low) / 2;
+        int compared = strcmp(id, list->items[middle].id);
+        if (compared == 0) return &list->items[middle];
+        if (compared < 0) high = middle;
+        else low = middle + 1;
     }
     return NULL;
 }
 
-static void printStudentDetails(const StudentInfo *student) {
-    if (!student) {
-        printf("Student details: Not registered in fee_students.txt.\n");
-        return;
+static const struct FeeProfile *findProfile(const struct ProfileList *list, const char *id) {
+    size_t low = 0, high = list->count;
+    while (low < high) {
+        size_t middle = low + (high - low) / 2;
+        int compared = strcmp(id, list->items[middle].id);
+        if (compared == 0) return &list->items[middle];
+        if (compared < 0) high = middle;
+        else low = middle + 1;
     }
-    struct Student registered;
-    const char *name = student->name;
-    if (lookupStudent(student->id, &registered) == 1) name = registered.name;
-    printf("Student Name: %s\n", name);
-    printf("Room No     : %d\n", student->roomNo);
-    printf("Monthly Fee : Rs %ld.%02ld\n",
-           student->monthlyCents / 100, student->monthlyCents % 100);
+    return NULL;
+}
+
+static int saveFees(struct FeeList *list) {
+    if (list->count > 1) qsort(list->items, list->count, sizeof(*list->items), compareFeeIds);
+    char temporary[RECORD_LINE_SIZE];
+    FILE *file = createDataTempFile(PAYMENT_FILE, temporary);
+    if (file == NULL) { printDataFileError(PAYMENT_FILE); return 0; }
+    for (size_t i = 0; i < list->count; i++) {
+        char paid[40];
+        formatMoney(list->items[i].paidCents, paid, sizeof(paid));
+        if (fprintf(file, "%s 50000.00 %s\n", list->items[i].id, paid) < 0) {
+            fclose(file); remove(temporary); printDataFileError(PAYMENT_FILE); return 0;
+        }
+    }
+    if (!commitDataTempFile(file, temporary, PAYMENT_FILE)) {
+        printDataFileError(PAYMENT_FILE);
+        return 0;
+    }
+    return 1;
+}
+
+static int saveProfiles(struct ProfileList *list) {
+    if (list->count > 1) qsort(list->items, list->count, sizeof(*list->items), compareProfileIds);
+    char temporary[RECORD_LINE_SIZE];
+    FILE *file = createDataTempFile(PROFILE_FILE, temporary);
+    if (file == NULL) { printDataFileError(PROFILE_FILE); return 0; }
+    for (size_t i = 0; i < list->count; i++) {
+        char monthly[40];
+        formatMoney(list->items[i].monthlyCents, monthly, sizeof(monthly));
+        if (fprintf(file, "%s|%s\n", list->items[i].id, monthly) < 0) {
+            fclose(file); remove(temporary); printDataFileError(PROFILE_FILE); return 0;
+        }
+    }
+    if (!commitDataTempFile(file, temporary, PROFILE_FILE)) {
+        printDataFileError(PROFILE_FILE);
+        return 0;
+    }
+    return 1;
+}
+
+int migrateFeeProfiles(void) {
+    struct ProfileList profiles = {0};
+    int legacy;
+    if (!loadProfiles(&profiles, &legacy)) return 0;
+    int saved = !legacy || saveProfiles(&profiles);
+    freeProfiles(&profiles);
+    return saved;
+}
+
+static int readPositiveAmount(const char *prompt, long long maximum, long long *cents) {
+    char line[128], limit[40];
+    formatMoney(maximum, limit, sizeof(limit));
+    while (readConsoleLine(prompt, line, sizeof(line))) {
+        if (parseMoney(line, cents) && *cents > 0 && *cents <= maximum) return 1;
+        fprintf(stderr, "Invalid amount. Enter Rs 0.01-%s with up to 2 decimals.\n", limit);
+    }
+    return 0;
+}
+
+/* A display gets one validated register and allocation snapshot, not one file
+ * load per payment row. Names and rooms are always current shared data. */
+static int loadSharedSnapshot(struct StudentRegister *students) {
+    if (!loadStudentRegister(students)) return 0;
+    if (!loadRoomState()) { freeStudentRegister(students); return 0; }
+    return 1;
+}
+
+static void printStudentDetails(const char *id, const struct FeeProfile *profile,
+                                const struct StudentRegister *students) {
+    const struct Student *student = findRegisteredStudent(students, id);
+    printf("Student Name: %s\n", student != NULL ? student->name : "(not registered)");
+    int room;
+    if (lookupStudentRoom(id, &room)) printf("Room No     : %d\n", room);
+    else printf("Room No     : Unallocated\n");
+    if (profile != NULL) {
+        char monthly[40];
+        formatMoney(profile->monthlyCents, monthly, sizeof(monthly));
+        printf("Monthly Fee : Rs %s\n", monthly);
+    } else printf("Monthly Fee : Not configured\n");
 }
 
 static void addStudentFee(void) {
-    FeeList fees = {0};
-    StudentList students = {0};
-    FeeRecord record;
-    StudentInfo student;
-    FeeRecord *existingFee;
-    struct Student registered;
-
-    printf("\n--- Add Student ---\n");
-    if (!readStudentId(student.id)) return;
-    if (lookupStudent(student.id, &registered) != 1) {
-        printf("Student not registered. Register through Student Management first.\n");
-        return;
-    }
-    strcpy(student.name, registered.name);
-    if (!loadRecords(&fees)) return;
-    if (!loadStudents(&students)) { freeRecords(&fees); return; }
-
-    existingFee = findRecord(&fees, student.id);
-    if (findStudent(&students, student.id) != NULL) {
-        printf("Student %s already has registered details. Duplicate not added.\n",
-               student.id);
+    struct StudentRegister students = {0};
+    struct FeeList fees = {0};
+    struct ProfileList profiles = {0};
+    struct FeeProfile profile;
+    int legacy;
+    printf("\n--- Add Student Fee Profile ---\n");
+    if (!readStudentIndex("Student ID: ", profile.id)) return;
+    if (!loadSharedSnapshot(&students)) return;
+    if (findRegisteredStudent(&students, profile.id) == NULL) {
+        fprintf(stderr, "Student not registered. Register through Student Management first.\n");
         goto cleanup;
     }
-    if (existingFee != NULL) {
-        printf("Existing payment record found. Details will be added without "
-               "resetting paid amounts.\n");
-    }
-    if (!readRoomNo(&student.roomNo) ||
-        !readMonthlyFee(&student.monthlyCents)) goto cleanup;
-
-    /* Existing payment records can gain missing personal details safely.
-     * For new records, write the payment file FIRST, then student details.
-     * If the second write fails, rerunning Add Student completes the profile
-     * instead of zeroing or overwriting existing payments.
-     */
-    if (existingFee == NULL) {
-        strcpy(record.id, student.id);
-        record.paidCents = 0;
-        if (!pushRecord(&fees, record) || !saveRecords(&fees)) {
-            printf("Student NOT added; could not save payment record.\n");
-            goto cleanup;
-        }
-    }
-    if (!pushStudent(&students, student) || !saveStudents(&students)) {
-        printf("Could not save student details. Payment record, if created, "
-               "remains safe. Choose Add Student again to complete details.\n");
+    int room;
+    if (!lookupStudentRoom(profile.id, &room)) {
+        fprintf(stderr, "Student has no room allocation. Allocate a room through Room Management first.\n");
         goto cleanup;
     }
-    printf("\nStudent added successfully!\n");
-    printf("Student ID  : %s\n", student.id);
-    printStudentDetails(&student);
+    if (!loadFees(&fees) || !loadProfiles(&profiles, &legacy)) goto cleanup;
+    if (findProfile(&profiles, profile.id) != NULL) {
+        fprintf(stderr, "Student %s already has a fee profile. Duplicate not added.\n", profile.id);
+        goto cleanup;
+    }
+    struct FeeRecord *existing = findFee(&fees, profile.id);
+    int existingPayment = existing != NULL;
+    long long previousPaid = existingPayment ? existing->paidCents : 0;
+    if (!readPositiveAmount("Monthly Fee (Rs): ", TOTAL_CENTS, &profile.monthlyCents)) goto cleanup;
+    if (!pushProfile(&profiles, &profile)) goto cleanup;
+    /* Persist payment first. If profile saving fails, retry safely completes the
+     * profile without resetting any payment that already exists. */
+    if (!existingPayment) {
+        struct FeeRecord record = {0};
+        strcpy(record.id, profile.id);
+        if (!pushFee(&fees, &record) || !saveFees(&fees)) goto cleanup;
+    }
+    if (!saveProfiles(&profiles)) {
+        fprintf(stderr, "Profile not saved. Existing payments remain safe; retry to complete the profile.\n");
+        goto cleanup;
+    }
+    printf("\nStudent added successfully!\nStudent ID  : %s\n", profile.id);
+    printStudentDetails(profile.id, &profile, &students);
     printf("Total Fee   : Rs 50000.00\n");
-    if (existingFee) {
-        printf("Previous Paid: Rs %ld.%02ld (preserved)\n",
-               existingFee->paidCents / 100, existingFee->paidCents % 100);
-    } else {
-        printf("Paid Amount : Rs 0.00\n");
-    }
+    char paid[40];
+    formatMoney(previousPaid, paid, sizeof(paid));
+    if (existingPayment) printf("Previous Paid: Rs %s (preserved)\n", paid);
+    else printf("Paid Amount : Rs 0.00\n");
 cleanup:
-    freeStudents(&students);
-    freeRecords(&fees);
+    freeStudentRegister(&students);
+    freeFees(&fees);
+    freeProfiles(&profiles);
 }
 
 static void recordPayment(void) {
-    FeeList list = {0};
-    FeeRecord *record;
-    char id[ID_LEN];
-    long amount, balance;
-
+    char id[STUDENT_ID_SIZE];
     printf("\n--- Record Payment ---\n");
-    if (!readStudentId(id)) return;
-    if (!loadRecords(&list)) return;
-
-    record = findRecord(&list, id);
-    if (record == NULL) {
-        printf("Student not found. Add the fee record first.\n");
-        freeRecords(&list);
+    if (!readStudentIndex("Student ID: ", id)) return;
+    struct StudentRegister students = {0};
+    if (!loadStudentRegister(&students)) return;
+    int registered = findRegisteredStudent(&students, id) != NULL;
+    freeStudentRegister(&students);
+    if (!registered) {
+        fprintf(stderr, "Student not registered. Register through Student Management first.\n");
         return;
     }
-    balance = TOTAL_CENTS - record->paidCents;
-    printf("Total: Rs 50000.00 | Paid: Rs %ld.%02ld | Balance: Rs %ld.%02ld\n",
-           record->paidCents / 100, record->paidCents % 100,
-           balance / 100, balance % 100);
+    struct FeeList fees = {0};
+    if (!loadFees(&fees)) return;
+    struct FeeRecord *record = findFee(&fees, id);
+    if (record == NULL) {
+        fprintf(stderr, "Student fee record not found. Add the fee profile first.\n");
+        freeFees(&fees);
+        return;
+    }
+    long long balance = TOTAL_CENTS - record->paidCents;
     if (balance == 0) {
         printf("This student's fee is already fully paid.\n");
-        freeRecords(&list);
+        freeFees(&fees);
         return;
     }
-    if (!readPaymentAmount(&amount)) {
-        freeRecords(&list);
-        return;
-    }
-    if (amount > balance) {
-        printf("Payment exceeds the remaining balance of Rs %ld.%02ld.\n",
-               balance / 100, balance % 100);
-        freeRecords(&list);
-        return;
-    }
-
-    record->paidCents += amount;  /* ADD, never overwrite the old payment */
-    if (saveRecords(&list)) {
-        balance = TOTAL_CENTS - record->paidCents;
-        printf("\n========== PAYMENT RECEIPT ==========\n");
-        printf("Student ID  : %s\n", record->id);
-        printf("Amount Paid : Rs %ld.%02ld\n", amount / 100, amount % 100);
-        printf("Total Paid  : Rs %ld.%02ld\n",
-               record->paidCents / 100, record->paidCents % 100);
-        printf("Balance Due : Rs %ld.%02ld\n", balance / 100, balance % 100);
+    char paid[40], due[40];
+    formatMoney(record->paidCents, paid, sizeof(paid));
+    formatMoney(balance, due, sizeof(due));
+    printf("Total: Rs 50000.00 | Paid: Rs %s | Balance: Rs %s\n", paid, due);
+    long long amount;
+    if (!readPositiveAmount("Amount to pay (Rs): ", balance, &amount)) { freeFees(&fees); return; }
+    record->paidCents += amount;
+    long long totalPaid = record->paidCents;
+    if (saveFees(&fees)) {
+        char payment[40], total[40];
+        formatMoney(amount, payment, sizeof(payment));
+        formatMoney(totalPaid, total, sizeof(total));
+        formatMoney(TOTAL_CENTS - totalPaid, due, sizeof(due));
+        printf("\n========== PAYMENT RECEIPT ==========\nStudent ID  : %s\n", id);
+        printf("Amount Paid : Rs %s\nTotal Paid  : Rs %s\nBalance Due : Rs %s\n", payment, total, due);
         printf("=====================================\n");
-    } else {
-        printf("Payment NOT saved.\n");
     }
-    freeRecords(&list);
+    freeFees(&fees);
 }
 
 static void viewStudentFee(void) {
-    FeeList fees = {0};
-    StudentList students = {0};
-    FeeRecord *record;
-    char id[ID_LEN];
-    long balance;
-
+    char id[STUDENT_ID_SIZE];
     printf("\n--- View Student Fee Details ---\n");
-    if (!readStudentId(id)) return;
-    if (!loadRecords(&fees)) return;
-    if (!loadStudents(&students)) { freeRecords(&fees); return; }
-
-    record = findRecord(&fees, id);
-    if (record == NULL) {
-        printf("Student not found.\n");
-    } else {
-        balance = TOTAL_CENTS - record->paidCents;
-        printf("Student ID  : %s\n", record->id);
-        printStudentDetails(studentForId(&students, id));
-        printf("Total Fee   : Rs 50000.00\n");
-        printf("Paid        : Rs %ld.%02ld\n",
-               record->paidCents / 100, record->paidCents % 100);
-        printf("Balance Due : Rs %ld.%02ld\n", balance / 100, balance % 100);
+    if (!readStudentIndex("Student ID: ", id)) return;
+    struct FeeList fees = {0};
+    struct ProfileList profiles = {0};
+    struct StudentRegister students = {0};
+    int legacy;
+    if (!loadFees(&fees) || !loadProfiles(&profiles, &legacy) || !loadSharedSnapshot(&students)) goto cleanup;
+    struct FeeRecord *record = findFee(&fees, id);
+    if (record == NULL) fprintf(stderr, "Student fee record not found.\n");
+    else {
+        printf("Student ID  : %s\n", id);
+        printStudentDetails(id, findProfile(&profiles, id), &students);
+        char paid[40], due[40];
+        formatMoney(record->paidCents, paid, sizeof(paid));
+        formatMoney(TOTAL_CENTS - record->paidCents, due, sizeof(due));
+        printf("Total Fee   : Rs 50000.00\nPaid        : Rs %s\nBalance Due : Rs %s\n", paid, due);
     }
-    freeStudents(&students);
-    freeRecords(&fees);
+cleanup:
+    freeFees(&fees);
+    freeProfiles(&profiles);
+    freeStudentRegister(&students);
 }
 
 static void listAllFees(void) {
-    FeeList fees = {0};
-    StudentList students = {0};
-    size_t i;
-
-    if (!loadRecords(&fees)) return;
-    if (!loadStudents(&students)) { freeRecords(&fees); return; }
-    if (fees.count == 0) {
-        printf("No fee records found.\n");
-    } else {
-        printf("\n%-29s %-22s %-7s %-12s %-12s %-12s\n",
-               "Student ID", "Student Name", "Room", "Monthly(Rs)",
-               "Paid(Rs)", "Balance(Rs)");
-        printf("------------------------------------------------------------------------------------------\n");
-        for (i = 0; i < fees.count; ++i) {
-            const FeeRecord *fee = &fees.items[i];
-            const StudentInfo *student = studentForId(&students, fee->id);
-            char room[20], monthly[32], paid[32], balance[32];
-            if (student) {
-                snprintf(room, sizeof(room), "%d", student->roomNo);
-                snprintf(monthly, sizeof(monthly), "%ld.%02ld",
-                         student->monthlyCents / 100, student->monthlyCents % 100);
-            } else {
-                strcpy(room, "-");
-                strcpy(monthly, "-");
-            }
-            snprintf(paid, sizeof(paid), "%ld.%02ld",
-                     fee->paidCents / 100, fee->paidCents % 100);
-            snprintf(balance, sizeof(balance), "%ld.%02ld",
-                     (TOTAL_CENTS - fee->paidCents) / 100,
-                     (TOTAL_CENTS - fee->paidCents) % 100);
-            struct Student registered;
-            const char *name = student ? student->name : "(not entered)";
-            if (lookupStudent(fee->id, &registered) == 1) name = registered.name;
-            printf("%-29.29s %-22.22s %-7s %-12s %-12s %-12s\n",
-                   fee->id, name,
-                   room, monthly, paid, balance);
+    struct FeeList fees = {0};
+    struct ProfileList profiles = {0};
+    struct StudentRegister students = {0};
+    int legacy;
+    if (!loadFees(&fees) || !loadProfiles(&profiles, &legacy) || !loadSharedSnapshot(&students)) goto cleanup;
+    if (fees.count == 0) printf("No fee records found.\n");
+    else {
+        printf("\n%-29s %-22s %-12s %-12s %-12s %-12s\n",
+               "Student ID", "Student Name", "Room", "Monthly(Rs)", "Paid(Rs)", "Balance(Rs)");
+        for (size_t i = 0; i < fees.count; i++) {
+            const struct FeeRecord *fee = &fees.items[i];
+            const struct Student *student = findRegisteredStudent(&students, fee->id);
+            const struct FeeProfile *profile = findProfile(&profiles, fee->id);
+            char roomText[20], monthly[40] = "-", paid[40], due[40];
+            int room;
+            if (lookupStudentRoom(fee->id, &room)) snprintf(roomText, sizeof(roomText), "%d", room);
+            else strcpy(roomText, "Unallocated");
+            if (profile != NULL) formatMoney(profile->monthlyCents, monthly, sizeof(monthly));
+            formatMoney(fee->paidCents, paid, sizeof(paid));
+            formatMoney(TOTAL_CENTS - fee->paidCents, due, sizeof(due));
+            printf("%-29s %-22s %-12s %-12s %-12s %-12s\n", fee->id,
+                   student != NULL ? student->name : "(not registered)", roomText, monthly, paid, due);
         }
         printf("Total Fee per student: Rs 50000.00\n");
     }
-    freeStudents(&students);
-    freeRecords(&fees);
+cleanup:
+    freeFees(&fees);
+    freeProfiles(&profiles);
+    freeStudentRegister(&students);
 }
 
 static void listPendingFees(void) {
-    FeeList list = {0};
-    size_t i;
-    size_t students = 0;
+    struct FeeList fees = {0};
+    if (!loadFees(&fees)) return;
     long long total = 0;
-
-    if (!loadRecords(&list)) return;
-    printf("\n--- Students With Pending Fees ---\n");
-    printf("%-29s %s\n", "Student ID", "Due (Rs)");
-    for (i = 0; i < list.count; ++i) {
-        long due = TOTAL_CENTS - list.items[i].paidCents;
+    size_t students = 0;
+    printf("\n--- Students With Pending Fees ---\n%-29s %s\n", "Student ID", "Due (Rs)");
+    for (size_t i = 0; i < fees.count; i++) {
+        long long due = TOTAL_CENTS - fees.items[i].paidCents;
         if (due > 0) {
-            printf("%-29s %ld.%02ld\n",
-                   list.items[i].id, due / 100, due % 100);
-            ++students;
+            if (total > LLONG_MAX - due) {
+                fprintf(stderr, "Pending fee total is too large to represent.\n");
+                freeFees(&fees);
+                return;
+            }
+            char amount[40];
+            formatMoney(due, amount, sizeof(amount));
+            printf("%-29s %s\n", fees.items[i].id, amount);
             total += due;
+            students++;
         }
     }
-    printf("%zu student(s) owe Rs %lld.%02lld in total.\n",
-           students, total / 100, total % 100);
-    freeRecords(&list);
+    char amount[40];
+    formatMoney(total, amount, sizeof(amount));
+    printf("%zu student(s) owe Rs %s in total.\n", students, amount);
+    freeFees(&fees);
 }
 
-/* Called by the team's main.c. No separate main() in this file. */
 void feeMenu(void) {
-    char line[128];
-    int status;
-    char *s, *end;
-    long choice;
-
+    if (!migrateFeeProfiles()) return;
     for (;;) {
         printf("\n===== FEE & PAYMENT TRACKING =====\n");
-        printf("1. Add Student Fee Profile (registered ID, Room No, Monthly Fee)\n");
-        printf("2. Record Payment\n");
-        printf("3. View Student Fee Details\n");
-        printf("4. List All Students\n");
-        printf("5. List Students With Pending Fees\n");
-        printf("0. Back\n");
-        printf("Choice: ");
-
-        status = readLine(line, sizeof(line));
-        if (status == 0) return;  /* don't loop forever on stdin EOF */
-        if (status < 0) continue;
-        s = trim(line);
-        if (*s == '\0') {
-            printf("Invalid choice.\n");
-            continue;
-        }
-        errno = 0;
-        choice = strtol(s, &end, 10);
-        if (errno == ERANGE || *end != '\0' || end == s) {
-            printf("Invalid choice.\n");
-            continue;
-        }
-
+        printf("1. Add Student Fee Profile (registered and allocated students)\n");
+        printf("2. Record Payment\n3. View Student Fee Details\n4. List All Students\n");
+        printf("5. List Students With Pending Fees\n0. Back\n");
+        int choice;
+        if (!readMenuChoice(0, 5, &choice) || choice == 0) return;
         switch (choice) {
-            case 1: addStudentFee();   break;
-            case 2: recordPayment();   break;
-            case 3: viewStudentFee();  break;
-            case 4: listAllFees();     break;
+            case 1: addStudentFee(); break;
+            case 2: recordPayment(); break;
+            case 3: viewStudentFee(); break;
+            case 4: listAllFees(); break;
             case 5: listPendingFees(); break;
-            case 0: return;
-            default: printf("Invalid choice.\n");
         }
     }
 }

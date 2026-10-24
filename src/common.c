@@ -260,7 +260,7 @@ int readConsoleLine(const char *prompt, char *buffer, size_t capacity) {
         int status = readTextLine(stdin, buffer, capacity);
         if (status == TEXT_LINE_EOF || status == TEXT_LINE_ERROR) return 0;
         if (status == TEXT_LINE_INVALID) {
-            printf("Invalid input: line is too long or contains a NUL byte.\n");
+            fprintf(stderr, "Invalid input: line is too long or contains a NUL byte.\n");
             continue;
         }
         char *trimmed = trimText(buffer);
@@ -273,7 +273,7 @@ int readMenuChoice(int minimum, int maximum, int *choice) {
     char line[64];
     while (readConsoleLine("Enter your choice: ", line, sizeof(line))) {
         if (parseInteger(line, minimum, maximum, choice)) return 1;
-        printf("Invalid choice. Please select between %d-%d.\n", minimum, maximum);
+        fprintf(stderr, "Invalid choice. Please select between %d-%d.\n", minimum, maximum);
     }
     return 0;
 }
@@ -286,7 +286,7 @@ int readStudentIndex(const char *prompt, char id[STUDENT_ID_SIZE]) {
             normalizeStudentIndex(id);
             return 1;
         }
-        printf("Invalid Student ID. Use TG followed by letters, digits, '/', '-' or '_' (max 29 characters).\n");
+        fprintf(stderr, "Invalid Student ID. Use TG followed by letters, digits, '/', '-' or '_' (max 29 characters).\n");
     }
     return 0;
 }

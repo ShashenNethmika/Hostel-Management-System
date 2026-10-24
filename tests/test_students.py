@@ -3,6 +3,22 @@ from cli_support import HostelTestCase, A, B
 
 
 class StudentRegressions(HostelTestCase):
+    def test_student_records_require_pipe_delimiters(self):
+        original = f"{A} Sample 0771234567\n"
+        (self.data / "students.txt").write_text(original)
+        output = self.run_cli("1\n2\n0\n5\n4\n0\n0\n", warnings=True)
+        self.assertNotIn("Total Registered Students:", output)
+        self.assertIn("Total Registered Students in System: 0", output)
+        self.assertEqual((self.data / "students.txt").read_text(), original)
+
+    def test_input_errors_use_stderr_and_retry_the_same_field(self):
+        output = self.run_cli(f"1\n1\nBAD\n{A}\nName1\nGood Name\nabc\n0771234567\n0\n0\n", warnings=True)
+        self.assertIn("STUDENT REGISTERED SUCCESSFULLY", output)
+        self.assertIn("Invalid Student ID", self.last_run.stderr)
+        self.assertIn("Invalid name", self.last_run.stderr)
+        self.assertIn("Invalid Phone Number", self.last_run.stderr)
+        self.assertNotIn("Invalid", self.last_run.stdout)
+
     def test_append_separates_a_record_without_final_newline(self):
         first = f"{A}|Sample Student|0771234567"
         (self.data / "students.txt").write_text(first)
@@ -48,7 +64,7 @@ class StudentRegressions(HostelTestCase):
         self.assertIn(f"{B}|Other Student|0777654321", text)
 
     def test_embedded_nul_input_is_rejected_as_a_complete_line(self):
-        output = self.run_cli(f"1\n1\n{A}\0hidden\n{A}\nBad\0Name\nGood Name\n0771234567\0hidden\n0771234567\n0\n0\n")
+        output = self.run_cli(f"1\n1\n{A}\0hidden\n{A}\nBad\0Name\nGood Name\n0771234567\0hidden\n0771234567\n0\n0\n", warnings=True)
         self.assertIn("Invalid input", output)
         self.assertEqual((self.data / "students.txt").read_text(), f"{A}|Good Name|0771234567\n")
 

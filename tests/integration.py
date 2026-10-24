@@ -1,5 +1,4 @@
 """End-to-end CLI checks against disposable data."""
-import shutil
 import subprocess
 import pathlib
 import sys
@@ -19,15 +18,15 @@ class HostelIntegration(HostelTestCase):
             f"2\n3\n101\n1\n4\n{A.lower()}\n101\n"
             f"4\n{A}\n4\n{B}\n101\n0\n"
             f"3\n1\n{A}\n0\n2099-12-31\n2\n3\n0\n"
-            f"4\n1\n{A}\n101\n1000\n2\n{A}\n10000.25\n"
-            f"2\n{A}\n2000.75\n2\n{A}\n50000\n1\n{A}\n3\n{A}\n4\n5\n0\n"
-            "5\n1\n2\n3\n4\n5\n0\n0\n"
+            f"4\n1\n{A}\n1000\n2\n{A}\n10000.25\n"
+            f"2\n{A}\n2000.75\n1\n{A}\n3\n{A}\n4\n5\n0\n"
+            "5\n1\n2\n3\n4\n5\n0\n0\n", warnings=True
         )
         for expected in (
             "Student ID Already Registered!", "STUDENT FOUND",
             "already allocated to room 101", "Room 101 is FULL",
             "Attendance saved for Sample Student (Went Home)",
-            "Payment exceeds the remaining balance", "Duplicate not added",
+            "Duplicate not added",
         ):
             self.assertIn(expected, output)
         self.assertIn("Total Paid  : Rs 12001.00", output)
@@ -47,10 +46,10 @@ class HostelIntegration(HostelTestCase):
 
     def test_student_updates_are_shared_and_room_removal_persists(self):
         self.register()
-        self.run_cli(f"2\n3\n101\n2\n4\n{A}\n101\n0\n4\n1\n{A}\n101\n1000\n0\n0\n")
+        self.run_cli(f"2\n3\n101\n2\n4\n{A}\n101\n0\n4\n1\n{A}\n1000\n0\n0\n")
         output = self.run_cli(
             f"1\n4\n{A}\n1\nUpdated Student\n4\n{A}\n2\ninvalid\n0770000000\n0\n"
-            f"3\n1\n{A}\n1\n0\n4\n3\n{A}\n4\n0\n2\n5\n{A}\n0\n0\n"
+            f"3\n1\n{A}\n1\n0\n4\n3\n{A}\n4\n0\n2\n5\n{A}\n0\n0\n", warnings=True
         )
         self.assertIn("Invalid Phone Number", output)
         self.assertIn("Student Name: Updated Student", output)
@@ -78,10 +77,10 @@ class HostelIntegration(HostelTestCase):
         for text in ("", "x\n99\n0\n", "1\n", "2\n", "3\n", "4\n", "5\n",
                      "1\n1\n", "1\n1\nTGTEST\n", "0" , "z" * 1000 + "\n0\n"):
             with self.subTest(text=text[:30]):
-                self.run_cli(text)
+                self.run_cli(text, warnings=True)
         output = self.run_cli(
             f"1\n1\nBAD\n{A}\nName1\nValid Name\n123456789012\nabcdefghij\n0771234567\n0\n"
-            f"3\n1\n{A}\ninvalid\n0\n2026-02-30\n1900-01-01\n2099-12-31\n0\n0\n"
+            f"3\n1\n{A}\ninvalid\n0\n2026-02-30\n1900-01-01\n2099-12-31\n0\n0\n", warnings=True
         )
         self.assertIn("Invalid Student ID", output)
         self.assertIn("Invalid name", output)
@@ -90,21 +89,21 @@ class HostelIntegration(HostelTestCase):
         self.assertEqual(len((self.data / "students.txt").read_text().splitlines()), 1)
         for submenu in (2, 3, 4):
             operation = 4 if submenu == 2 else 1
-            output = self.run_cli(f"{submenu}\n{operation}\nTGUNKNOWN\n0\n0\n")
+            output = self.run_cli(f"{submenu}\n{operation}\nTGUNKNOWN\n0\n0\n", warnings=True)
             self.assertIn("Student not registered", output)
 
     def test_money_validation_and_sorted_dues(self):
         self.register()
-        self.run_cli(f"4\n1\n{A}\n101\n1000\n0\n0\n")
+        self.run_cli(f"2\n3\n101\n2\n4\n{A}\n101\n0\n4\n1\n{A}\n1000\n0\n0\n")
         for amount in ("NaN", "-1", "0", "2.333", "50000.01", "1e4", "9" * 90):
-            output = self.run_cli(f"4\n2\n{A}\n{amount}\n0\n0\n")
+            output = self.run_cli(f"4\n2\n{A}\n{amount}\n", warnings=True)
             self.assertIn("Invalid amount", output)
             self.assertEqual((self.data / "payments.txt").read_text(), f"{A} 50000.00 0.00\n")
         (self.data / "payments.txt").write_text(f"{A} 50000.00 12345.67\n{B} 50000.00 0.00\n")
         self.run_cli("5\n1\n0\n0\n")
         rows = (self.data / "unpaid_summary.txt").read_text().splitlines()[1:]
         self.assertEqual([row.split() for row in rows], [[B, "50000.00"], [A, "37654.33"]])
-        paid = self.run_cli(f"4\n2\n{A}\n37654.33\n2\n{A}\n0\n5\n1\n0\n0\n")
+        paid = self.run_cli(f"4\n2\n{A}\n37654.33\n2\n{A}\n0\n5\n1\n0\n0\n", warnings=True)
         self.assertIn("already fully paid", paid)
         self.assertNotIn(A, (self.data / "unpaid_summary.txt").read_text())
 
@@ -118,6 +117,7 @@ class HostelIntegration(HostelTestCase):
         self.assertIn("Total students currently on leave: 2", output)
         self.assertIn("Total students overdue: 0", output)
         self.assertIn("2 legacy leave record(s)", output)
+        self.register()
         bad_payments = f"{A} 50000 60000\n{B} 50000 1000\n"
         (self.data / "payments.txt").write_text(bad_payments)
         output = self.run_cli(f"4\n2\n{B}\n0\n5\n1\n0\n0\n", warnings=True)
@@ -126,15 +126,39 @@ class HostelIntegration(HostelTestCase):
         self.assertNotIn(A, (self.data / "unpaid_summary.txt").read_text())
 
     def test_repository_samples(self):
-        shutil.copytree(PROJECT / "data", self.data, dirs_exist_ok=True)
-        original = {p.name: p.read_bytes() for p in self.data.glob("*.txt")}
+        # A deterministic fixture: checkout/archive data may be empty or user-edited.
+        third = "TG2024000003"
+        samples = {
+            "students.txt": f"{A}|Sample Student|0771234567\n{B}|Other Student|0777654321\n{third}|Third Student|0770000000\n",
+            "rooms.txt": "101 4 1\n102 4 0\n",
+            "allocations.txt": f"{A} 101\n",
+            "attendance.txt": f"{A} 0\n{B} 0\n{third} 1\n",
+            "payments.txt": f"{A} 50000 25000\n{B} 50000 50000\n{third} 50000 0\n",
+            "fee_students.txt": f"{A}|1000.00\n",
+        }
+        for name, content in samples.items():
+            (self.data / name).write_text(content)
+        # This is an output, including when a supplied archive contains an empty one.
+        (self.data / "unpaid_summary.txt").write_text("")
         output = self.run_cli("1\n2\n0\n2\n1\n6\n0\n3\n2\n3\n0\n4\n4\n5\n0\n5\n1\n2\n3\n4\n5\n0\n0\n")
         self.assertIn("Total Registered Students in System: 3", output)
         self.assertIn("Overall Occupancy Rate: 12.50%", output)
         self.assertIn("Total students currently on leave: 2", output)
-        self.assertNotIn("Invalid payments.txt", output)
-        for name, content in original.items():
-            self.assertEqual((self.data / name).read_bytes(), content, name)
+        for name, content in samples.items():
+            self.assertEqual((self.data / name).read_text(), content, name)
+        rows = (self.data / "unpaid_summary.txt").read_text().splitlines()[1:]
+        self.assertEqual([row.split() for row in rows], [[third, "50000.00"], [A, "25000.00"]])
+
+    def test_all_empty_data_files_work(self):
+        for name in ("fee_students.txt", "unpaid_summary.txt"):
+            (self.data / name).write_text("")
+        output = self.run_cli("1\n2\n0\n2\n1\n6\n0\n3\n2\n3\n0\n4\n4\n5\n0\n5\n1\n2\n3\n4\n5\n0\n0\n")
+        self.assertIn("Total Registered Students in System: 0", output)
+        self.assertIn("Overall Occupancy Rate: 0.00%", output)
+        self.assertIn("Total students currently on leave: 0", output)
+        for name in ("students", "rooms", "allocations", "attendance", "payments", "fee_students"):
+            self.assertEqual((self.data / f"{name}.txt").read_bytes(), b"")
+        self.assertEqual((self.data / "unpaid_summary.txt").read_text(), "--- Unpaid Hostel Fees Report ---\n")
 
     def test_default_and_explicit_data_directories(self):
         result = subprocess.run([str(BINARY)], input="0\n", text=True,

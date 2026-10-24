@@ -10,6 +10,7 @@ __pycache__/
 /src/reports
 /src/rooms
 /src/pay
+/src/hostel
 
 # Generated reports and temporary data files
 /data/unpaid_summary.txt

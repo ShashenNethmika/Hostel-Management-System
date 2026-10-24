@@ -22,12 +22,14 @@ static int readAttendance(FILE *file, struct Attendance *record, size_t *lineNum
     currentDate(today);
     while (readDataLine(file, "attendance.txt", line, sizeof(line), lineNumber)) {
         char *fields[5];
+        int pipeSeparated = strchr(line, '|') != NULL;
         int count = splitFields(line, fields, 5);
-        if ((count != 2 && count != 4 && count != 5) || !isValidStudentIndex(fields[0])) {
+        if ((pipeSeparated ? (count != 4 && count != 5) : count != 2) ||
+            !isValidStudentIndex(fields[0])) {
             warnInvalidRecord("attendance.txt", *lineNumber);
             continue;
         }
-        /* Accept original ID Status samples, and the member's pipe history. */
+        /* Only ID Status is a supported whitespace legacy format; history uses pipes. */
         const char *status = count == 2 ? fields[1] : fields[2];
         if (!parseInteger(status, 0, 1, &record->status) ||
             (count >= 4 && (!validStudentName(fields[1]) || !validDate(fields[3]) ||
@@ -51,8 +53,10 @@ static void markAttendance(void) {
     struct Attendance record;
     struct Student student;
     if (!readStudentIndex("Student ID: ", record.id)) return;
-    if (lookupStudent(record.id, &student) != 1) {
-        printf("Student not registered. Register through Student Management first.\n");
+    int found = lookupStudent(record.id, &student);
+    if (found < 0) return;
+    if (found == 0) {
+        fprintf(stderr, "Student not registered. Register through Student Management first.\n");
         return;
     }
     strcpy(record.name, student.name);
@@ -68,7 +72,7 @@ static void markAttendance(void) {
                 strcpy(record.expectedReturn, line);
                 break;
             }
-            printf("Invalid return date. Use today or a later calendar date.\n");
+            fprintf(stderr, "Invalid return date. Use today or a later calendar date.\n");
         }
     }
     char line[RECORD_LINE_SIZE];
@@ -128,6 +132,13 @@ void displayLeaveReport(int overdueOnly) {
         free(latest);
         return;
     }
+    /* Validate and read the register once, before presenting any report rows.
+     * An invalid register cannot provide unambiguous current student names. */
+    struct StudentRegister students = {0};
+    if (!loadStudentRegister(&students)) {
+        free(latest);
+        return;
+    }
     char today[11];
     currentDate(today);
     size_t leaveCount = 0, unknownReturn = 0;
@@ -140,9 +151,9 @@ void displayLeaveReport(int overdueOnly) {
             if (overdueOnly) continue;
         }
         if (overdueOnly && strcmp(latest[i].expectedReturn, today) >= 0) continue;
-        struct Student student;
+        const struct Student *student = findRegisteredStudent(&students, latest[i].id);
         const char *name = latest[i].name;
-        if (lookupStudent(latest[i].id, &student) == 1) name = student.name;
+        if (student != NULL) name = student->name;
         printf("%-30s %-25s %-12s %s\n", latest[i].id, name, latest[i].date, latest[i].expectedReturn);
         leaveCount++;
     }
@@ -150,6 +161,7 @@ void displayLeaveReport(int overdueOnly) {
         printf("Total students overdue: %zu\n", leaveCount);
         if (unknownReturn) printf("%zu legacy leave record(s) have no expected return date.\n", unknownReturn);
     } else printf("Total students currently on leave: %zu\n", leaveCount);
+    freeStudentRegister(&students);
     free(latest);
 }
 

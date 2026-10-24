@@ -52,11 +52,13 @@ Startup changes the working directory once so every module opens the same files.
 | 1 | Student registration | Register, list, search, update names/phones; reject duplicate IDs |
 | 2 | Room allocation | Add rooms, show vacancies, allocate/remove students; enforce capacity and one room per student |
 | 3 | Attendance and leave | Record attendance, view history/current leave, expected return dates and overdue students |
-| 4 | Fees and payments | Add fee profiles, accumulate payments, reject overpayments, view receipts/balances and pending fees |
+| 4 | Fees and payments | Create profiles for allocated students, accumulate payments, reject overpayments, show current rooms and balances |
 | 5 | Reports | Dues sorted by highest balance using bubble sort, room occupancy, current leave, student totals, overdue leave |
 
-Register students in menu 1 before adding new allocations, attendance, or fee
-profiles. Student IDs are case insensitive and stored uppercase for new
+Register students in menu 1 before adding new allocations or attendance. Allocate
+a real room in menu 2 before creating a fee profile in menu 4. The fee module
+derives the room from that allocation; it never accepts a separate room number.
+Student IDs are case insensitive and stored uppercase for new
 records. They must start with `TG`, contain 3–29 characters, and use letters,
 digits, `/`, `-`, or `_`. Existing slash-separated IDs remain supported;
 slashes are not removed, so `TG/IT/1234` and `TGIT1234` are distinct IDs.
@@ -64,6 +66,10 @@ Names can contain spaces; phone numbers require exactly 10 digits.
 Menus accept complete input lines and return safely on end of input.
 LF and CRLF line endings are accepted, including names at the maximum length.
 Embedded NUL bytes and overlong input are rejected as complete lines.
+Invalid field formats/ranges retry the same prompt in every module; EOF cancels
+without saving. Unknown students, unavailable/full rooms, and duplicate entities
+report the problem and cancel that operation. Prompts/results use stdout; errors
+use stderr.
 
 ## Repository layout
 
@@ -99,9 +105,14 @@ PDFs, executable/object files, build output, temporary files, and Windows
 | `allocations.txt` | `StudentID RoomNumber` |
 | `attendance.txt` | `ID\|Name\|Status\|Date\|ExpectedReturn` |
 | `payments.txt` | `StudentID TotalFee PaidAmount` |
-| `fee_students.txt` | `StudentID\|Name\|RoomNumber\|MonthlyFee` (created by the fee menu) |
+| `fee_students.txt` | `StudentID\|MonthlyFee` (created by the fee menu) |
 | `unpaid_summary.txt` | Generated sorted unpaid balances; ignored by Git |
 | `room_transaction.txt` | Internal recovery journal for interrupted room/allocation updates; ignored by Git |
+
+Student records require pipe separators. Attendance history also requires pipe
+separators; only the original whitespace `ID Status` two-field format is supported
+as legacy attendance. Whitespace student records and whitespace 4/5-field
+attendance history are rejected.
 
 Attendance status is `1` for in hostel and `0` for on leave. Dates use
 `YYYY-MM-DD`; `-` means no return date. New leave records require a valid
@@ -113,13 +124,24 @@ and cannot establish overdue status. Returning to the hostel clears current leav
 without deleting history. Future-dated attendance events are rejected; expected
 return dates can be in the future.
 
-The total hostel fee is Rs 50,000.00. Money is tracked in integer cents to
-preserve exact payment totals. The fee module keeps optional monthly-fee and
-room details separately so payments stay compatible with the reports. That
-room number is informational; actual allocation changes only through menu 2.
-Student names shown in fee and current-leave views come from the shared student
-register, so name updates are reflected there. Historical attendance keeps the
-name recorded at the time.
+The total hostel fee is Rs 50,000.00. Every module uses `long long` integer cents
+and shared money parsing/formatting to preserve exact totals. A fee profile stores
+only the student's ID and monthly fee; names come from `students.txt` and rooms
+come from `allocations.txt`, validated against `rooms.txt`. Removing an allocation
+shows the student as unallocated; moving to another room shows that room without
+changing the fee profile. Existing debt remains payable after removal.
+
+Opening the fee menu validates and migrates legacy
+`ID|Name|RoomNumber|MonthlyFee` profiles to `ID|MonthlyFee`. Migration validates
+legacy names using the same rules as registration, removes the copied room/name
+fields, and preserves payment amounts. Invalid legacy data is left unchanged and
+must be corrected before that menu can open.
+
+Fee and current-leave lists load the student register once per operation and use
+in-memory searches for each row. Fee lists similarly load allocations once.
+Name updates are visible in both modules; historical attendance keeps the name
+recorded at the time. A corrupt register aborts a list with one diagnostic rather
+than repeating the same error for every row.
 
 The uploaded student/room/allocation samples and existing payment/attendance
 samples were preserved. They originate from different module examples and may
@@ -143,9 +165,13 @@ writes to another file.
 
 Room allocation updates affect both `rooms.txt` and `allocations.txt`. A validated
 `room_transaction.txt` journal records the intended state before either file is
-replaced. Startup and room reports recover pending updates after a process
+replaced. If saving fails before the journal is committed, no room change is
+saved and the original state is reloaded immediately; no restart/recovery is
+required. If the journal was committed, the change is pending until replay
+completes. Startup and room reports recover pending updates after a process
 interruption. If a file error prevents recovery, correct the reported filesystem
-problem and restart; check the recovered state before retrying the operation.
+problem and reopen Room Management or restart; check the recovered state before
+retrying the operation.
 Keep the journal until recovery succeeds. A malformed journal blocks startup
 without replacing the original data and needs manual correction from a known
 good backup. This recovery supports process interruption; it does not guarantee
@@ -162,7 +188,10 @@ cross-module data sharing, capacity/duplicate checks, attendance/overdue state,
 payment accumulation and exact balances, sorted reports, restart persistence,
 legacy/malformed records, invalid input/EOF, supplied sample data, integer
 overflow, NUL/CRLF boundaries, failed writes, and interrupted room recovery.
-Tests create temporary data directories and leave repository data unchanged.
+Tests create their own deterministic sample fixtures in temporary directories,
+so they also work with a completely empty `data/` directory or an extracted
+source archive. An existing `unpaid_summary.txt` is treated as generated output,
+not an input that must stay byte-identical. Repository data is left unchanged.
 To test another build, run `python3 tests/run.py /path/to/hostel`.
 
 `make clean` removes only the ignored build directory. Rebuild with `make`.
