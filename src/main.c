@@ -21,6 +21,9 @@ int main(int argc, char **argv) {
     if (!recoverRoomTransaction()) {
         return EXIT_FAILURE;
     }
+    if (!initializeDataFiles()) {
+        return EXIT_FAILURE;
+    }
 
     for (;;) {
         int choice;

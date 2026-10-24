@@ -17,6 +17,8 @@ enum TextLineStatus {
 
 /* All modules use the same data directory and student ID convention. */
 int configureDataDirectory(const char *directory);
+/* Create missing shared text files; never reset existing records. */
+int initializeDataFiles(void);
 FILE *openDataFile(const char *name, const char *mode);
 void printDataFileError(const char *name);
 void warnInvalidRecord(const char *name, size_t lineNumber);

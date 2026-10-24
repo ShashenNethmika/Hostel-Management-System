@@ -6,7 +6,7 @@ SOURCES := src/main.c src/common.c src/student.c src/rooms.c src/attendance.c sr
 OBJECTS := $(SOURCES:src/%.c=build/%.o)
 DEPS := $(OBJECTS:.o=.d)
 
-.PHONY: all run test clean
+.PHONY: all run demo test clean
 all: build/hostel
 
 build/hostel: $(OBJECTS)
@@ -20,6 +20,12 @@ build:
 
 run: build/hostel
 	./build/hostel
+
+demo: build/hostel
+	@set -eu; hostel_demo_dir=$$(mktemp -d /tmp/hostel-demo.XXXXXX); \
+	cp examples/demo-data/*.txt "$$hostel_demo_dir/"; \
+	printf 'Demo data directory: %s\n' "$$hostel_demo_dir"; \
+	exec ./build/hostel "$$hostel_demo_dir"
 
 test: build/hostel
 	python3 tests/run.py ./build/hostel

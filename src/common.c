@@ -8,6 +8,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/stat.h>
 
 static char *trimText(char *text) {
     while (isspace((unsigned char)*text)) text++;
@@ -40,6 +41,30 @@ int configureDataDirectory(const char *directory) {
     }
     fprintf(stderr, "Cannot find data/. Run from the project root or specify a data directory.\n");
     return 0;
+}
+
+int initializeDataFiles(void) {
+    const char *required[] = {
+        "students.txt", "rooms.txt", "allocations.txt", "attendance.txt", "payments.txt"
+    };
+    for (size_t i = 0; i < sizeof(required) / sizeof(required[0]); i++) {
+        struct stat information;
+        if (stat(required[i], &information) == 0) {
+            if (!S_ISREG(information.st_mode)) {
+                fprintf(stderr, "%s must be a regular text file.\n", required[i]);
+                return 0;
+            }
+            FILE *existing = fopen(required[i], "r");
+            if (existing == NULL) { printDataFileError(required[i]); return 0; }
+            if (fclose(existing) != 0) { printDataFileError(required[i]); return 0; }
+            continue;
+        }
+        if (errno != ENOENT) { printDataFileError(required[i]); return 0; }
+        FILE *file = fopen(required[i], "a");
+        if (file == NULL) { printDataFileError(required[i]); return 0; }
+        if (fclose(file) != 0) { printDataFileError(required[i]); return 0; }
+    }
+    return 1;
 }
 
 FILE *openDataFile(const char *name, const char *mode) {

@@ -26,6 +26,17 @@ make
 make run
 ```
 
+For a complete demonstration with matching student/room/payment data:
+
+```sh
+make demo
+```
+
+Each demo starts with a fresh temporary copy of `examples/demo-data`; its path
+is printed so you can reopen the same records later. The supplied files stay
+unchanged. See [lecture alignment and integration](docs/lecture-alignment.md)
+for the mapping to Lectures 07–11 and the module connections.
+
 Or run the executable directly from the repository root:
 
 ```sh
@@ -44,6 +55,11 @@ The program selects `data/` from the project root, `../data/` when started
 from `src/` or `build/`, or the data directory beside the executable's parent
 directory on Ubuntu. An explicit data-directory argument takes priority.
 Startup changes the working directory once so every module opens the same files.
+It creates missing `students.txt`, `rooms.txt`, `allocations.txt`,
+`attendance.txt`, and `payments.txt` without resetting existing records.
+Fee profiles and the generated dues report are created when needed. An existing
+empty directory is enough for a first run; unreadable/uncreatable paths are
+reported rather than treated as successful initialization.
 
 ## Main menu
 
@@ -85,6 +101,8 @@ src/
   reports.c, reports.h   Member 5: reports and statistics
 data/                    Uploaded and existing sample text files
 examples/fee_main.c       Optional standalone fee-menu driver
+examples/demo-data/       Matching synthetic records for all five modules
+docs/lecture-alignment.md Lecture coverage and integration explanation
 tests/integration.py      CLI integration tests using disposable data
 Makefile                 Build, run, test and clean commands
 ```
@@ -146,7 +164,8 @@ than repeating the same error for every row.
 The uploaded student/room/allocation samples and existing payment/attendance
 samples were preserved. They originate from different module examples and may
 reference different student IDs. Historical records remain readable; new writes
-use the shared register. Do not use these mixed samples as live hostel records.
+use the shared register. Use `make demo` for a consistent demonstration across
+all modules. Do not use the mixed original samples as live hostel records.
 Room records can include older occupants without ID allocations; those occupants
 cannot be removed by ID until their actual allocations are recorded.
 
@@ -188,6 +207,8 @@ cross-module data sharing, capacity/duplicate checks, attendance/overdue state,
 payment accumulation and exact balances, sorted reports, restart persistence,
 legacy/malformed records, invalid input/EOF, supplied sample data, integer
 overflow, NUL/CRLF boundaries, failed writes, and interrupted room recovery.
+They also cover first-run file creation and the matching demonstration dataset
+through registration, allocation, attendance, payment, and reports.
 Tests create their own deterministic sample fixtures in temporary directories,
 so they also work with a completely empty `data/` directory or an extracted
 source archive. An existing `unpaid_summary.txt` is treated as generated output,

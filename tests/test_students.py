@@ -1,5 +1,7 @@
 """Regression coverage for shared input and lossless student edits."""
-from cli_support import HostelTestCase, A, B
+import subprocess
+
+from cli_support import HostelTestCase, A, B, BINARY
 
 
 class StudentRegressions(HostelTestCase):
@@ -84,6 +86,9 @@ class StudentRegressions(HostelTestCase):
         # A directory cannot be read as a register; reject instead of reporting success.
         source.unlink()
         source.mkdir()
-        output = self.run_cli(f"1\n1\n{A}\n0\n0\n", warnings=True)
-        self.assertNotIn("STUDENT REGISTERED SUCCESSFULLY", output)
+        result = subprocess.run([str(BINARY), str(self.data)], input="0\n", text=True,
+                                cwd=self.root, capture_output=True, timeout=5)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("students.txt", result.stderr)
+        self.assertNotIn("STUDENT REGISTERED SUCCESSFULLY", result.stdout)
         self.assertTrue(source.is_dir())
