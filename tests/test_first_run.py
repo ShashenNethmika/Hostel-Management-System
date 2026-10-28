@@ -50,7 +50,7 @@ class FirstRunTests(HostelTestCase):
             "rooms.txt": b"101 2 1",
             "allocations.txt": b"TGTEST 101\r\n",
             "attendance.txt": b"TGTEST|Sample Student|1|2000-01-01|-\n",
-            "payments.txt": b"tgtest 50000 123.45",
+            "payments.txt": b"tgtest 5000 123.45",
         }
         for name, content in original.items():
             (self.data / name).write_bytes(content)
@@ -63,7 +63,7 @@ class FirstRunTests(HostelTestCase):
     def test_partial_missing_dataset_keeps_existing_records(self):
         original = {
             "students.txt": b"TGTEST|Sample Student|0771234567\n",
-            "payments.txt": b"TGTEST 50000.00 12345.67\n",
+            "payments.txt": b"TGTEST 5000.00 1234.56\n",
         }
         for name, content in original.items():
             (self.data / name).write_bytes(content)

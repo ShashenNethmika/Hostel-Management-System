@@ -15,7 +15,6 @@
 
 #define PAYMENT_FILE "payments.txt"
 #define PROFILE_FILE "fee_students.txt"
-#define TOTAL_CENTS 5000000LL
 
 struct FeeRecord {
     char id[STUDENT_ID_SIZE];
@@ -116,9 +115,18 @@ static int loadFees(struct FeeList *list) {
         int count = splitFields(line, fields, 3);
         if (count == 0) continue;
         if (count != 3 || !isValidStudentIndex(fields[0]) ||
-            !parseMoney(fields[1], &total) || total != TOTAL_CENTS ||
+            !parseMoney(fields[1], &total) ||
             !parseMoney(fields[2], &record.paidCents) || record.paidCents > total) {
             fprintf(stderr, "Invalid payments.txt: bad record on line %zu.\n", lineNumber);
+            loaded = 0;
+            break;
+        }
+        if (total != HOSTEL_FEE_CENTS) {
+            char expected[40];
+            formatMoney(HOSTEL_FEE_CENTS, expected, sizeof(expected));
+            fprintf(stderr, "Invalid payments.txt: total fee on line %zu must be Rs %s. "
+                    "Existing payment records are unchanged; review old amounts before continuing.\n",
+                    lineNumber, expected);
             loaded = 0;
             break;
         }
@@ -173,7 +181,7 @@ static int loadProfiles(struct ProfileList *list, int *legacyFound) {
             (count == 4 && (!validStudentName(fields[1]) ||
                             !parseInteger(fields[2], 1, INT_MAX, &room))) ||
             !parseMoney(fields[count == 4 ? 3 : 1], &profile.monthlyCents) ||
-            profile.monthlyCents <= 0 || profile.monthlyCents > TOTAL_CENTS) {
+            profile.monthlyCents <= 0 || profile.monthlyCents > HOSTEL_FEE_CENTS) {
             fprintf(stderr, "Invalid fee_students.txt: bad record on line %zu.\n", lineNumber);
             loaded = 0;
             break;
@@ -228,10 +236,12 @@ static int saveFees(struct FeeList *list) {
     char temporary[RECORD_LINE_SIZE];
     FILE *file = createDataTempFile(PAYMENT_FILE, temporary);
     if (file == NULL) { printDataFileError(PAYMENT_FILE); return 0; }
+    char total[40];
+    formatMoney(HOSTEL_FEE_CENTS, total, sizeof(total));
     for (size_t i = 0; i < list->count; i++) {
         char paid[40];
         formatMoney(list->items[i].paidCents, paid, sizeof(paid));
-        if (fprintf(file, "%s 50000.00 %s\n", list->items[i].id, paid) < 0) {
+        if (fprintf(file, "%s %s %s\n", list->items[i].id, total, paid) < 0) {
             fclose(file); remove(temporary); printDataFileError(PAYMENT_FILE); return 0;
         }
     }
@@ -328,7 +338,7 @@ static void addStudentFee(void) {
     struct FeeRecord *existing = findFee(&fees, profile.id);
     int existingPayment = existing != NULL;
     long long previousPaid = existingPayment ? existing->paidCents : 0;
-    if (!readPositiveAmount("Monthly Fee (Rs): ", TOTAL_CENTS, &profile.monthlyCents)) goto cleanup;
+    if (!readPositiveAmount("Monthly Fee (Rs): ", HOSTEL_FEE_CENTS, &profile.monthlyCents)) goto cleanup;
     if (!pushProfile(&profiles, &profile)) goto cleanup;
     /* Persist payment first. If profile saving fails, retry safely completes the
      * profile without resetting any payment that already exists. */
@@ -343,7 +353,9 @@ static void addStudentFee(void) {
     }
     printf("\nStudent added successfully!\nStudent ID  : %s\n", profile.id);
     printStudentDetails(profile.id, &profile, &students);
-    printf("Total Fee   : Rs 50000.00\n");
+    char total[40];
+    formatMoney(HOSTEL_FEE_CENTS, total, sizeof(total));
+    printf("Total Fee   : Rs %s\n", total);
     char paid[40];
     formatMoney(previousPaid, paid, sizeof(paid));
     if (existingPayment) printf("Previous Paid: Rs %s (preserved)\n", paid);
@@ -374,16 +386,17 @@ static void recordPayment(void) {
         freeFees(&fees);
         return;
     }
-    long long balance = TOTAL_CENTS - record->paidCents;
+    long long balance = HOSTEL_FEE_CENTS - record->paidCents;
     if (balance == 0) {
         printf("This student's fee is already fully paid.\n");
         freeFees(&fees);
         return;
     }
-    char paid[40], due[40];
+    char fixedTotal[40], paid[40], due[40];
+    formatMoney(HOSTEL_FEE_CENTS, fixedTotal, sizeof(fixedTotal));
     formatMoney(record->paidCents, paid, sizeof(paid));
     formatMoney(balance, due, sizeof(due));
-    printf("Total: Rs 50000.00 | Paid: Rs %s | Balance: Rs %s\n", paid, due);
+    printf("Total: Rs %s | Paid: Rs %s | Balance: Rs %s\n", fixedTotal, paid, due);
     long long amount;
     if (!readPositiveAmount("Amount to pay (Rs): ", balance, &amount)) { freeFees(&fees); return; }
     record->paidCents += amount;
@@ -392,7 +405,7 @@ static void recordPayment(void) {
         char payment[40], total[40];
         formatMoney(amount, payment, sizeof(payment));
         formatMoney(totalPaid, total, sizeof(total));
-        formatMoney(TOTAL_CENTS - totalPaid, due, sizeof(due));
+        formatMoney(HOSTEL_FEE_CENTS - totalPaid, due, sizeof(due));
         printf("\n========== PAYMENT RECEIPT ==========\nStudent ID  : %s\n", id);
         printf("Amount Paid : Rs %s\nTotal Paid  : Rs %s\nBalance Due : Rs %s\n", payment, total, due);
         printf("=====================================\n");
@@ -414,10 +427,11 @@ static void viewStudentFee(void) {
     else {
         printf("Student ID  : %s\n", id);
         printStudentDetails(id, findProfile(&profiles, id), &students);
-        char paid[40], due[40];
+        char fixedTotal[40], paid[40], due[40];
+        formatMoney(HOSTEL_FEE_CENTS, fixedTotal, sizeof(fixedTotal));
         formatMoney(record->paidCents, paid, sizeof(paid));
-        formatMoney(TOTAL_CENTS - record->paidCents, due, sizeof(due));
-        printf("Total Fee   : Rs 50000.00\nPaid        : Rs %s\nBalance Due : Rs %s\n", paid, due);
+        formatMoney(HOSTEL_FEE_CENTS - record->paidCents, due, sizeof(due));
+        printf("Total Fee   : Rs %s\nPaid        : Rs %s\nBalance Due : Rs %s\n", fixedTotal, paid, due);
     }
 cleanup:
     freeFees(&fees);
@@ -445,11 +459,13 @@ static void listAllFees(void) {
             else strcpy(roomText, "Unallocated");
             if (profile != NULL) formatMoney(profile->monthlyCents, monthly, sizeof(monthly));
             formatMoney(fee->paidCents, paid, sizeof(paid));
-            formatMoney(TOTAL_CENTS - fee->paidCents, due, sizeof(due));
+            formatMoney(HOSTEL_FEE_CENTS - fee->paidCents, due, sizeof(due));
             printf("%-29s %-22s %-12s %-12s %-12s %-12s\n", fee->id,
                    student != NULL ? student->name : "(not registered)", roomText, monthly, paid, due);
         }
-        printf("Total Fee per student: Rs 50000.00\n");
+        char fixedTotal[40];
+        formatMoney(HOSTEL_FEE_CENTS, fixedTotal, sizeof(fixedTotal));
+        printf("Total Fee per student: Rs %s\n", fixedTotal);
     }
 cleanup:
     freeFees(&fees);
@@ -464,7 +480,7 @@ static void listPendingFees(void) {
     size_t students = 0;
     printf("\n--- Students With Pending Fees ---\n%-29s %s\n", "Student ID", "Due (Rs)");
     for (size_t i = 0; i < fees.count; i++) {
-        long long due = TOTAL_CENTS - fees.items[i].paidCents;
+        long long due = HOSTEL_FEE_CENTS - fees.items[i].paidCents;
         if (due > 0) {
             if (total > LLONG_MAX - due) {
                 fprintf(stderr, "Pending fee total is too large to represent.\n");

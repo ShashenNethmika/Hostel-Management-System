@@ -7,6 +7,7 @@
 #define STUDENT_ID_SIZE 30
 #define STUDENT_NAME_SIZE 100
 #define RECORD_LINE_SIZE 512
+#define HOSTEL_FEE_CENTS 500000LL /* Rs 5,000.00, shared by fees and reports. */
 
 enum TextLineStatus {
     TEXT_LINE_ERROR = -2,

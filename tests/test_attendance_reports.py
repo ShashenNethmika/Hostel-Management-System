@@ -5,6 +5,19 @@ from cli_support import A, B, HostelTestCase
 
 
 class AttendanceAndReportsTests(HostelTestCase):
+    def test_old_fee_total_preserves_payments_and_previous_report(self):
+        original = f"{A} 50000.00 25000.00\n"
+        (self.data / "payments.txt").write_text(original)
+        previous = "Previously verified report\n"
+        report = self.data / "unpaid_summary.txt"
+        report.write_text(previous)
+        self.run_cli("5\n1\n0\n0\n", warnings=True)
+        self.assertIn("5000.00", self.last_run.stderr)
+        self.assertIn("Review existing amounts", self.last_run.stderr)
+        self.assertNotIn("Unpaid Hostel Fees Report (Sorted", self.last_run.stdout)
+        self.assertEqual((self.data / "payments.txt").read_text(), original)
+        self.assertEqual(report.read_text(), previous)
+
     def test_attendance_validation_errors_use_stderr_and_retry_dates(self):
         self.register()
         self.run_cli(f"3\n1\nTGUNKNOWN\n1\n{A}\n0\nbad-date\n2099-12-31\n0\n0\n", warnings=True)
@@ -118,7 +131,7 @@ class AttendanceAndReportsTests(HostelTestCase):
         report = self.data / "unpaid_summary.txt"
         report.write_text(previous)
         (self.data / "payments.txt").write_text(
-            f"{A} 50000.00 10000.00\n{A.lower()} 50000.00 20000.00\n"
+            f"{A} 5000.00 1000.00\n{A.lower()} 5000.00 2000.00\n"
         )
         output = self.run_cli("5\n1\n0\n0\n", warnings=True)
         self.assertNotIn("Unpaid Hostel Fees Report (Sorted", output)
@@ -126,12 +139,12 @@ class AttendanceAndReportsTests(HostelTestCase):
 
     def test_report_rejects_wrong_fee_total_and_extreme_amounts(self):
         (self.data / "payments.txt").write_text(
-            f"{A} 60000 10000\nTGOVERFLOW 99999999999999999999999999 0\n"
-            f"{B} 50000 123.45\n"
+            f"{A} 6000 1000\nTGOVERFLOW 99999999999999999999999999 0\n"
+            f"{B} 5000 123.45\n"
         )
         self.run_cli("5\n1\n0\n0\n", warnings=True)
         rows = (self.data / "unpaid_summary.txt").read_text().splitlines()[1:]
-        self.assertEqual([row.split() for row in rows], [[B, "49876.55"]])
+        self.assertEqual([row.split() for row in rows], [[B, "4876.55"]])
 
     def test_occupancy_uses_same_positive_integer_rules_as_room_module(self):
         (self.data / "rooms.txt").write_text(
@@ -150,12 +163,12 @@ class AttendanceAndReportsTests(HostelTestCase):
 
     def test_payment_report_rejects_pipe_records_like_fee_writer(self):
         (self.data / "payments.txt").write_text(
-            f"{A}|50000|10000\n{B} 50000 123.45\n"
+            f"{A}|5000|1000\n{B} 5000 123.45\n"
         )
         output = self.run_cli("4\n4\n0\n5\n1\n0\n0\n", warnings=True)
         self.assertIn("Invalid payments.txt", output)
         rows = (self.data / "unpaid_summary.txt").read_text().splitlines()[1:]
-        self.assertEqual([row.split() for row in rows], [[B, "49876.55"]])
+        self.assertEqual([row.split() for row in rows], [[B, "4876.55"]])
 
     def test_occupancy_report_rejects_pipe_records_like_room_writer(self):
         (self.data / "rooms.txt").write_text("101|4|4\n102 4 1\n")
@@ -173,7 +186,7 @@ class AttendanceAndReportsTests(HostelTestCase):
         self.assertIn("Total Registered Students in System: 2", output)
 
     def test_report_save_failure_preserves_existing_destination(self):
-        (self.data / "payments.txt").write_text(f"{A} 50000 10000\n")
+        (self.data / "payments.txt").write_text(f"{A} 5000 1000\n")
         destination = self.data / "unpaid_summary.txt"
         destination.mkdir()
         (destination / "previous-report.txt").write_text("keep this report\n")
@@ -184,7 +197,7 @@ class AttendanceAndReportsTests(HostelTestCase):
     def test_unwritable_directory_keeps_previous_report(self):
         if os.geteuid() == 0:
             self.skipTest("root bypasses directory write permissions")
-        (self.data / "payments.txt").write_text(f"{A} 50000 10000\n")
+        (self.data / "payments.txt").write_text(f"{A} 5000 1000\n")
         report = self.data / "unpaid_summary.txt"
         report.write_text("previous verified report\n")
         self.addCleanup(self.data.chmod, 0o755)

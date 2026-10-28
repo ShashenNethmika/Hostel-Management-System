@@ -14,7 +14,7 @@ class CoherentDemoTests(HostelTestCase):
             "5\n1\n2\n3\n4\n5\n0\n0\n"
         )
         for expected in ("Student Name: Demo Student One", "Room No     : 101",
-                         "Balance Due : Rs 40000.00", "Overall Occupancy Rate: 50.00%",
+                         "Balance Due : Rs 4000.00", "Overall Occupancy Rate: 50.00%",
                          "Total students currently on leave: 1", "Total students overdue: 1",
                          "Total Registered Students in System: 2"):
             self.assertIn(expected, output)
@@ -34,8 +34,8 @@ class CoherentDemoTests(HostelTestCase):
         )
         for expected in ("STUDENT REGISTERED SUCCESSFULLY", "allocated to room 101",
                          "Attendance saved for Demo Student Three", "Student Name: Demo Student Three",
-                         "Balance Due : Rs 49876.55", "Overall Occupancy Rate: 75.00%",
+                         "Balance Due : Rs 4876.55", "Overall Occupancy Rate: 75.00%",
                          "Total Registered Students in System: 3"):
             self.assertIn(expected, output)
-        self.assertIn("TGDEMO000003 50000.00 123.45", (self.data / "payments.txt").read_text())
+        self.assertIn("TGDEMO000003 5000.00 123.45", (self.data / "payments.txt").read_text())
         self.assertIn("TGDEMO000003", (self.data / "unpaid_summary.txt").read_text())

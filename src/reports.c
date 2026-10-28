@@ -46,10 +46,24 @@ void calculateAndDisplayDues(void) {
     while (readDataLine(file, "payments.txt", line, sizeof(line), &lineNumber)) {
         char *fields[3];
         struct Payment payment;
-        if (strchr(line, '|') != NULL || splitFields(line, fields, 3) != 3 ||
+        int hasPipe = strchr(line, '|') != NULL;
+        int fieldCount = splitFields(line, fields, 3);
+        /* Old policy records need review. Preserve a prior financial report
+         * instead of replacing it with an empty report after the fee change. */
+        if (!hasPipe && fieldCount == 3 && isValidStudentIndex(fields[0]) &&
+            parseMoney(fields[1], &payment.totalFee) && payment.totalFee == 5000000LL) {
+            char expected[40];
+            formatMoney(HOSTEL_FEE_CENTS, expected, sizeof(expected));
+            fprintf(stderr, "Legacy fee total in payments.txt on line %zu; current fee is Rs %s. "
+                    "Review existing amounts before generating a new report.\n", lineNumber, expected);
+            free(payments);
+            fclose(file);
+            return;
+        }
+        if (hasPipe || fieldCount != 3 ||
             !isValidStudentIndex(fields[0]) ||
             !parseMoney(fields[1], &payment.totalFee) ||
-            payment.totalFee != 5000000LL ||
+            payment.totalFee != HOSTEL_FEE_CENTS ||
             !parseMoney(fields[2], &payment.paidAmount) ||
             payment.paidAmount > payment.totalFee) {
             warnInvalidRecord("payments.txt", lineNumber);

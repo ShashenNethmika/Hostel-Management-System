@@ -37,6 +37,10 @@ is printed so you can reopen the same records later. The supplied files stay
 unchanged. See [lecture alignment and integration](docs/lecture-alignment.md)
 for the mapping to Lectures 07–11 and the module connections.
 
+The [Word-document review feedback](docs/document-review-feedback.md) contains
+section-specific corrections and ready-to-forward messages for the module
+developers, including the updated Rs 5,000 fee specification.
+
 Or run the executable directly from the repository root:
 
 ```sh
@@ -142,12 +146,20 @@ and cannot establish overdue status. Returning to the hostel clears current leav
 without deleting history. Future-dated attendance events are rejected; expected
 return dates can be in the future.
 
-The total hostel fee is Rs 50,000.00. Every module uses `long long` integer cents
+The total hostel fee is Rs 5,000.00, defined once by `HOSTEL_FEE_CENTS` in
+`common.h`. Every module uses `long long` integer cents
 and shared money parsing/formatting to preserve exact totals. A fee profile stores
 only the student's ID and monthly fee; names come from `students.txt` and rooms
 come from `allocations.txt`, validated against `rooms.txt`. Removing an allocation
 shows the student as unallocated; moving to another room shows that room without
 changing the fee profile. Existing debt remains payable after removal.
+
+Versioned sample/demo payments use the Rs 5,000 fee and revised illustrative
+paid amounts. Previously saved runtime payments are never automatically scaled,
+clamped, or rewritten. Old Rs 50,000 totals need review before payment entry;
+the dues report also preserves its previous output until those amounts are
+reviewed. The monthly-fee input remains profile information rather than an
+automatic monthly billing calculation.
 
 Opening the fee menu validates and migrates legacy
 `ID|Name|RoomNumber|MonthlyFee` profiles to `ID|MonthlyFee`. Migration validates
@@ -161,8 +173,9 @@ Name updates are visible in both modules; historical attendance keeps the name
 recorded at the time. A corrupt register aborts a list with one diagnostic rather
 than repeating the same error for every row.
 
-The uploaded student/room/allocation samples and existing payment/attendance
-samples were preserved. They originate from different module examples and may
+The original student, room, allocation and attendance samples retain their IDs;
+illustrative payment amounts were revised for the Rs 5,000 fee. These files
+originate from different module examples and may
 reference different student IDs. Historical records remain readable; new writes
 use the shared register. Use `make demo` for a consistent demonstration across
 all modules. Do not use the mixed original samples as live hostel records.

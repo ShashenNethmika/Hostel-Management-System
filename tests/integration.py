@@ -18,8 +18,8 @@ class HostelIntegration(HostelTestCase):
             f"2\n3\n101\n1\n4\n{A.lower()}\n101\n"
             f"4\n{A}\n4\n{B}\n101\n0\n"
             f"3\n1\n{A}\n0\n2099-12-31\n2\n3\n0\n"
-            f"4\n1\n{A}\n1000\n2\n{A}\n10000.25\n"
-            f"2\n{A}\n2000.75\n1\n{A}\n3\n{A}\n4\n5\n0\n"
+            f"4\n1\n{A}\n1000\n2\n{A}\n1000.25\n"
+            f"2\n{A}\n200.75\n1\n{A}\n3\n{A}\n4\n5\n0\n"
             "5\n1\n2\n3\n4\n5\n0\n0\n", warnings=True
         )
         for expected in (
@@ -29,20 +29,20 @@ class HostelIntegration(HostelTestCase):
             "Duplicate not added",
         ):
             self.assertIn(expected, output)
-        self.assertIn("Total Paid  : Rs 12001.00", output)
-        self.assertIn("Balance Due : Rs 37999.00", output)
+        self.assertIn("Total Paid  : Rs 1201.00", output)
+        self.assertIn("Balance Due : Rs 3799.00", output)
         self.assertIn("Overall Occupancy Rate: 100.00%", output)
         self.assertIn("Total students currently on leave: 1", output)
         self.assertIn("Total Registered Students in System: 2", output)
-        self.assertEqual((self.data / "payments.txt").read_text(), f"{A} 50000.00 12001.00\n")
+        self.assertEqual((self.data / "payments.txt").read_text(), f"{A} 5000.00 1201.00\n")
         self.assertEqual((self.data / "rooms.txt").read_text(), "101 1 1\n")
         self.assertEqual((self.data / "allocations.txt").read_text(), f"{A} 101\n")
         self.assertEqual(len((self.data / "students.txt").read_text().splitlines()), 2)
-        self.assertIn("37999.00", (self.data / "unpaid_summary.txt").read_text())
+        self.assertIn("3799.00", (self.data / "unpaid_summary.txt").read_text())
         # A new process reads the saved state; returning cancels the current leave.
         restarted = self.run_cli(f"3\n1\n{A}\n1\n3\n0\n4\n3\n{A}\n0\n5\n3\n0\n0\n")
         self.assertIn("Total students currently on leave: 0", restarted)
-        self.assertIn("Paid        : Rs 12001.00", restarted)
+        self.assertIn("Paid        : Rs 1201.00", restarted)
 
     def test_student_updates_are_shared_and_room_removal_persists(self):
         self.register()
@@ -95,15 +95,15 @@ class HostelIntegration(HostelTestCase):
     def test_money_validation_and_sorted_dues(self):
         self.register()
         self.run_cli(f"2\n3\n101\n2\n4\n{A}\n101\n0\n4\n1\n{A}\n1000\n0\n0\n")
-        for amount in ("NaN", "-1", "0", "2.333", "50000.01", "1e4", "9" * 90):
+        for amount in ("NaN", "-1", "0", "2.333", "5000.01", "1e4", "9" * 90):
             output = self.run_cli(f"4\n2\n{A}\n{amount}\n", warnings=True)
             self.assertIn("Invalid amount", output)
-            self.assertEqual((self.data / "payments.txt").read_text(), f"{A} 50000.00 0.00\n")
-        (self.data / "payments.txt").write_text(f"{A} 50000.00 12345.67\n{B} 50000.00 0.00\n")
+            self.assertEqual((self.data / "payments.txt").read_text(), f"{A} 5000.00 0.00\n")
+        (self.data / "payments.txt").write_text(f"{A} 5000.00 1234.56\n{B} 5000.00 0.00\n")
         self.run_cli("5\n1\n0\n0\n")
         rows = (self.data / "unpaid_summary.txt").read_text().splitlines()[1:]
-        self.assertEqual([row.split() for row in rows], [[B, "50000.00"], [A, "37654.33"]])
-        paid = self.run_cli(f"4\n2\n{A}\n37654.33\n2\n{A}\n0\n5\n1\n0\n0\n", warnings=True)
+        self.assertEqual([row.split() for row in rows], [[B, "5000.00"], [A, "3765.44"]])
+        paid = self.run_cli(f"4\n2\n{A}\n3765.44\n2\n{A}\n0\n5\n1\n0\n0\n", warnings=True)
         self.assertIn("already fully paid", paid)
         self.assertNotIn(A, (self.data / "unpaid_summary.txt").read_text())
 
@@ -118,7 +118,7 @@ class HostelIntegration(HostelTestCase):
         self.assertIn("Total students overdue: 0", output)
         self.assertIn("2 legacy leave record(s)", output)
         self.register()
-        bad_payments = f"{A} 50000 60000\n{B} 50000 1000\n"
+        bad_payments = f"{A} 5000 6000\n{B} 5000 1000\n"
         (self.data / "payments.txt").write_text(bad_payments)
         output = self.run_cli(f"4\n2\n{B}\n0\n5\n1\n0\n0\n", warnings=True)
         self.assertIn("Invalid payments.txt", output)
@@ -133,7 +133,7 @@ class HostelIntegration(HostelTestCase):
             "rooms.txt": "101 4 1\n102 4 0\n",
             "allocations.txt": f"{A} 101\n",
             "attendance.txt": f"{A} 0\n{B} 0\n{third} 1\n",
-            "payments.txt": f"{A} 50000 25000\n{B} 50000 50000\n{third} 50000 0\n",
+            "payments.txt": f"{A} 5000 2500\n{B} 5000 5000\n{third} 5000 0\n",
             "fee_students.txt": f"{A}|1000.00\n",
         }
         for name, content in samples.items():
@@ -147,7 +147,7 @@ class HostelIntegration(HostelTestCase):
         for name, content in samples.items():
             self.assertEqual((self.data / name).read_text(), content, name)
         rows = (self.data / "unpaid_summary.txt").read_text().splitlines()[1:]
-        self.assertEqual([row.split() for row in rows], [[third, "50000.00"], [A, "25000.00"]])
+        self.assertEqual([row.split() for row in rows], [[third, "5000.00"], [A, "2500.00"]])
 
     def test_all_empty_data_files_work(self):
         for name in ("fee_students.txt", "unpaid_summary.txt"):
