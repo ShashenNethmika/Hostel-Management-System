@@ -1,4 +1,4 @@
-# 🏫 Hostel Management System
+# Hostel Management System
 
 <div align="center">
 
@@ -25,9 +25,12 @@ The system is organized into five core modules, each accessible via a unified ma
 | **4. Fees & Payments** | Maintain student fee profiles, accumulate monthly payments, track balances, and prevent overpayments. |
 | **5. Reports & Statistics** | Generate insightful reports including dues (sorted via Bubble Sort), room occupancy rates, and leave summaries. |
 
----
+Requirements: GCC with C11 support and Make. Python 3 is only needed for tests.
 
-## 🚀 Getting Started
+```sh
+make
+make run
+```
 
 ### 📋 Prerequisites
 
@@ -64,9 +67,13 @@ Want to test the system with pre-loaded data? Run the demo mode! It populates th
 make demo
 ```
 
----
+To keep your own data separate from the supplied samples, copy the data
+directory and pass its path:
 
-## 🗃️ Architecture & Repository Layout
+```sh
+cp -r data /tmp/hostel-demo-data
+./build/hostel /tmp/hostel-demo-data
+```
 
 The system utilizes a modular C architecture. Core logic is divided into distinct `.c` and `.h` files, which are all linked through a central `main.c` entry point. Data is persisted using structured text files.
 
