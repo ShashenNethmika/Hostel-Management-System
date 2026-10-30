@@ -8,11 +8,11 @@ Data is stored in text files and remains available after the program exits.
 
 | Member | Student ID | Original contribution | Files |
 | --- | --- | --- | --- |
-| A.A.Shashen Nethmika | TG IT 2025 2469 | Main menu and reports/statistics | `src/main.c`, `src/reports.c`, `src/reports.h` |
-| M.M.Ishara Madhushan | TG IT 2025 2514 | Student registration and management | `src/student.c`, `src/student.h` |
-| S.G.A.T.V Subhawickrama | TG IT 2025 2518 | Attendance and leave management | `src/attendance.c`, `src/attendance.h` |
-| R.M.P.Prabodhini Rathnayake | TG IT 2025 2509 | Room allocation and management | `src/rooms.c`, `src/rooms.h` |
-| H.G.Chesmi Tharushika | TG IT 2025 2465 | Fees and payment tracking | `src/fee.c`, `src/fee.h` |
+| [A.A.Shashen Nethmika](https://github.com/ShashenNethmika) | TG IT 2025 2469 | Main menu and reports/statistics | `src/main.c`, `src/reports.c`, `src/reports.h` |
+| [M.M.Ishara Madhushan](https://github.com/madusha2005) | TG IT 2025 2514 | Student registration and management | `src/student.c`, `src/student.h` |
+| [S.G.A.T.V Subhawickrama](https://github.com/Tharushi-Vihanga) | TG IT 2025 2518 | Attendance and leave management | `src/attendance.c`, `src/attendance.h` |
+| [R.M.P.Prabodhini Rathnayake](https://github.com/yumi675) | TG IT 2025 2509 | Room allocation and management | `src/rooms.c`, `src/rooms.h` |
+| [H.G.Chesmi Tharushika](https://github.com/chesmihalpagoda-bit) | TG IT 2025 2465 | Fees and payment tracking | `src/fee.c`, `src/fee.h` |
 
 These credits identify the authors of the supplied group modules. The repository
 also includes subsequent integration changes, shared helpers, and tests.
